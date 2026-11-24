@@ -1,0 +1,482 @@
+{
+  "goal": "为大型官方微信小程序示例仓库做分层总览。优先确认源码根目录、主包/分包、代表性的组件/API/云开发模块及外部依赖。只做导航层总览，并记录未展开范围。",
+  "summary": "微信官方小程序示例仓库（miniprogram-demo）的分层导航总览：源码根目录为 miniprogram/（小程序端）与 cloudfunctions/（云函数端），由根 package.json 的 npm run init 串联初始化（同步 git submodule、安装 cloudfunctions 与 miniprogram 依赖）。miniprogram/app.json 定义主包页面（page/component、page/API、page/cloud、page/extend、page/animation、page/ad、pages/protocol/*），并声明 12 个分包根目录：packageChatTool、packageComponent、packageAPI、packageCloud、packageExtend、packageSkyline、packageSkylineExamples、packageSkylineRouter、packageXRFrame、skills、packageWeStoreCoffee，以及 chatTools 聊天工具入口与 preloadRule 预下载规则。全局配置启用 cloud:true、frameset、darkmode、glass-easel 组件框架、Skyline 渲染选项与 agent.skills（drink、agent-auth）。外部依赖方面，根 package.json 主要是构建/规范类 devDependencies（eslint、gulp、postcss、jest、miniprogram-automator、typescript）与 miniprogram-ci；小程序内还使用了 tdesign-miniprogram 组件库（位于 packageAPI/components/tdesign-miniprogram）与 weui 扩展库（useExtendedLib）。本轮仅完成导航层确认，未展开各分包内部页面实现与云函数代码。",
+  "delta": [
+    {
+      "kind": "module",
+      "subject": "miniprogram",
+      "description": "小程序端源码根目录，存放 app.js/app.json/app.wxss、全局组件与样式、公共库（common、util、_commons）、主包页面（page、pages）以及各分包目录。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/app.json",
+          "startLine": 1,
+          "endLine": 20,
+          "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+        },
+        {
+          "path": "README.md",
+          "startLine": 15,
+          "endLine": 15,
+          "sha256": "2ab96d24547cb78fd3b50ec347ca3119ef653569cbb473a7501849bcc8d0385f"
+        }
+      ]
+    },
+    {
+      "kind": "entry",
+      "subject": "miniprogram/app.js",
+      "description": "小程序 App() 入口逻辑：onLaunch 中设置后台拉取 token、读取预拉取缓存数据、依据启动参数 data.path 跳转页面、初始化 wx.cloud（env 取自 ./config）、汇总系统信息写入 globalData。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/app.js",
+          "startLine": 1,
+          "endLine": 60,
+          "sha256": "dfa0b2ae73deb1e9a80e063dfe16da83124c3a50ae4b33445fabca18e436b768"
+        }
+      ]
+    },
+    {
+      "kind": "relationship",
+      "subject": "miniprogram/app.js -> miniprogram/config.js",
+      "description": "App 入口通过 require('./config') 读取配置，使用 config.envId 作为云开发环境 ID 传给 wx.cloud.init。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/app.js",
+          "startLine": 1,
+          "endLine": 47,
+          "sha256": "dfa0b2ae73deb1e9a80e063dfe16da83124c3a50ae4b33445fabca18e436b768"
+        }
+      ]
+    },
+    {
+      "kind": "module",
+      "subject": "miniprogram 主包页面 (page/*, pages/protocol/*)",
+      "description": "主包页面集中在 page/ 下，按主题分为 component、API、cloud、extend、animation、ad 七个子目录，各含 index 入口页；pages/protocol 提供用户服务协议与隐私政策页（README 中作为 agent-auth 协议的落地页）。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/app.json",
+          "startLine": 2,
+          "endLine": 19,
+          "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+        },
+        {
+          "path": "miniprogram/app.json",
+          "startLine": 490,
+          "endLine": 519,
+          "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+        },
+        {
+          "path": "README.md",
+          "startLine": 41,
+          "endLine": 45,
+          "sha256": "2ab96d24547cb78fd3b50ec347ca3119ef653569cbb473a7501849bcc8d0385f"
+        }
+      ]
+    },
+    {
+      "kind": "module",
+      "subject": "miniprogram/packageCloud",
+      "description": "分包 packageCloud：云开发示例页，覆盖用户鉴权、数据库 CRUD/权限/服务端时间、云存储上传下载与临时链接、云函数调用（get-wx-context、scf-database、scf-storage、scf-openapi）。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/app.json",
+          "startLine": 214,
+          "endLine": 231,
+          "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+        }
+      ]
+    },
+    {
+      "kind": "module",
+      "subject": "miniprogram/packageExtend",
+      "description": "分包 packageExtend：扩展能力与 UI 组件示例页（form/base/operate/navigation/search/extend/adapt 分组），包含 cell、slideview、uploader、dialog、msg、searchbar、tabs、index-list 等。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/app.json",
+          "startLine": 232,
+          "endLine": 280,
+          "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+        }
+      ]
+    },
+    {
+      "kind": "module",
+      "subject": "miniprogram/packageXRFrame",
+      "description": "分包 packageXRFrame：XRFrame 场景与模型示例，包含 basic 场景系列、gltf 模型系列（损坏头盔/动画/材质/光照）与 AR 场景系列（2D/OSD/face/hand/body/shoe 等）。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/app.json",
+          "startLine": 329,
+          "endLine": 368,
+          "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+        }
+      ]
+    },
+    {
+      "kind": "module",
+      "subject": "miniprogram/packageChatTool",
+      "description": "分包 packageChatTool（independent 独立分包、renderer skyline、带 entry.js），同时被 chatTools 声明为聊天工具（entryPagePath pages/activity_create/index，群签到工具，需 scope.userLocation）。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/app.json",
+          "startLine": 24,
+          "endLine": 44,
+          "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+        }
+      ]
+    },
+    {
+      "kind": "relationship",
+      "subject": "miniprogram/app.json -> 各分包",
+      "description": "app.json 通过 preloadRule 为主包入口页配置分包预下载：page/component/index→packageComponent，page/API/index→packageAPI，page/cloud/index→packageCloud，page/extend/index→packageExtend，page/animation/index→packageSkylineRouter，packageAPI 下的 chattool 页→packageChatTool，均为 network=all。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/app.json",
+          "startLine": 440,
+          "endLine": 477,
+          "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+        }
+      ]
+    },
+    {
+      "kind": "module",
+      "subject": "cloudfunctions",
+      "description": "云函数端根目录，包含四个云函数：ARDemo、getServerDataDemo、getTempFileURL、login。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "README.md",
+          "startLine": 15,
+          "endLine": 15,
+          "sha256": "2ab96d24547cb78fd3b50ec347ca3119ef653569cbb473a7501849bcc8d0385f"
+        }
+      ]
+    },
+    {
+      "kind": "module",
+      "subject": "根 package.json",
+      "description": "仓库级 Node 配置：scripts 提供 init（sync + 安装 cloudfunctions/miniprogram 生产依赖）、lint、wxss:transform-vars、sync/pull/gco（git submodule 管理）；devDependencies 以 eslint/gulp/postcss/typescript/jest/miniprogram-automator 为主，dependencies 仅有 miniprogram-ci。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "package.json",
+          "startLine": 1,
+          "endLine": 51,
+          "sha256": "188511da6dfd3d89578df9e1c5ab5349e9a249633e297d6b5f030dfbe9f7e1cc"
+        }
+      ]
+    },
+    {
+      "kind": "relationship",
+      "subject": "根 package.json init -> cloudfunctions/ 与 miniprogram/",
+      "description": "npm run init 先执行 git submodule update --init --recursive 拉取子模块，再分别在 cloudfunctions/ 与 miniprogram/ 目录执行 npm i --production 安装运行时依赖，随后需在微信开发者工具中执行【工具-构建npm】。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "package.json",
+          "startLine": 6,
+          "endLine": 11,
+          "sha256": "188511da6dfd3d89578df9e1c5ab5349e9a249633e297d6b5f030dfbe9f7e1cc"
+        },
+        {
+          "path": "README.md",
+          "startLine": 8,
+          "endLine": 15,
+          "sha256": "2ab96d24547cb78fd3b50ec347ca3119ef653569cbb473a7501849bcc8d0385f"
+        }
+      ]
+    },
+    {
+      "kind": "module",
+      "subject": "miniprogram 其它顶层目录",
+      "description": "除分包外，miniprogram 下还有 _commons、common、component（自定义 navigation-bar）、components、app-bar、assets、image、util、workers（与 app.json 的 \"workers\": \"workers\" 对应）、skills 等支撑目录。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/app.json",
+          "startLine": 21,
+          "endLine": 23,
+          "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+        },
+        {
+          "path": "miniprogram/app.json",
+          "startLine": 528,
+          "endLine": 528,
+          "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+        }
+      ]
+    }
+  ],
+  "unresolved": [
+    "miniprogram/package.json 与 miniprogram/config.js 的具体内容未读取，无法确认小程序端运行时依赖清单与 envId 取值。",
+    "cloudfunctions 各云函数（login、ARDemo、getServerDataDemo、getTempFileURL）的实现与依赖未展开。",
+    "app.json 中 packageAPI、packageXRFrame 分包页面的完整清单未逐行读取（读取区间被截断）。",
+    "miniprogram/component、miniprogram/components、miniprogram/common、miniprogram/util、miniprogram/_commons、miniprogram/app-bar、miniprogram/workers 的内部结构与职责未确认。",
+    "test/、build/、gulpfile.js、.github/、.gitmodules 的内容与作用未展开（.gitmodules 仅从 package.json 的 sync 脚本推断存在子模块）。",
+    "miniprogram/skills/drink-skill 与 agent-auth-skill 的具体文件清单与实现未展开。",
+    "README 提及的云开发环境搭建文档（miniprogram/page/cloud/README.md）未读取，云开发依赖的云环境/权限配置不明。",
+    "Unverified source references for miniprogram/app.json.",
+    "Unverified source references for miniprogram/packageComponent.",
+    "Unverified source references for miniprogram/packageAPI.",
+    "Unverified source references for miniprogram/packageSkyline, packageSkylineExamples, packageSkylineRouter.",
+    "Unverified source references for miniprogram/packageWeStoreCoffee.",
+    "Unverified source references for miniprogram/skills.",
+    "Unverified source references for miniprogram/packageAPI/components/tdesign-miniprogram."
+  ],
+  "map": {
+    "version": 1,
+    "root": "D:\\codex project\\code review rewrite\\.local-bench\\miniprogram-demo",
+    "records": [
+      {
+        "kind": "module",
+        "subject": "miniprogram",
+        "description": "小程序端源码根目录，存放 app.js/app.json/app.wxss、全局组件与样式、公共库（common、util、_commons）、主包页面（page、pages）以及各分包目录。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/app.json",
+            "startLine": 1,
+            "endLine": 20,
+            "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+          },
+          {
+            "path": "README.md",
+            "startLine": 15,
+            "endLine": 15,
+            "sha256": "2ab96d24547cb78fd3b50ec347ca3119ef653569cbb473a7501849bcc8d0385f"
+          }
+        ]
+      },
+      {
+        "kind": "entry",
+        "subject": "miniprogram/app.js",
+        "description": "小程序 App() 入口逻辑：onLaunch 中设置后台拉取 token、读取预拉取缓存数据、依据启动参数 data.path 跳转页面、初始化 wx.cloud（env 取自 ./config）、汇总系统信息写入 globalData。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/app.js",
+            "startLine": 1,
+            "endLine": 60,
+            "sha256": "dfa0b2ae73deb1e9a80e063dfe16da83124c3a50ae4b33445fabca18e436b768"
+          }
+        ]
+      },
+      {
+        "kind": "relationship",
+        "subject": "miniprogram/app.js -> miniprogram/config.js",
+        "description": "App 入口通过 require('./config') 读取配置，使用 config.envId 作为云开发环境 ID 传给 wx.cloud.init。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/app.js",
+            "startLine": 1,
+            "endLine": 47,
+            "sha256": "dfa0b2ae73deb1e9a80e063dfe16da83124c3a50ae4b33445fabca18e436b768"
+          }
+        ]
+      },
+      {
+        "kind": "module",
+        "subject": "miniprogram 主包页面 (page/*, pages/protocol/*)",
+        "description": "主包页面集中在 page/ 下，按主题分为 component、API、cloud、extend、animation、ad 七个子目录，各含 index 入口页；pages/protocol 提供用户服务协议与隐私政策页（README 中作为 agent-auth 协议的落地页）。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/app.json",
+            "startLine": 2,
+            "endLine": 19,
+            "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+          },
+          {
+            "path": "miniprogram/app.json",
+            "startLine": 490,
+            "endLine": 519,
+            "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+          },
+          {
+            "path": "README.md",
+            "startLine": 41,
+            "endLine": 45,
+            "sha256": "2ab96d24547cb78fd3b50ec347ca3119ef653569cbb473a7501849bcc8d0385f"
+          }
+        ]
+      },
+      {
+        "kind": "module",
+        "subject": "miniprogram/packageCloud",
+        "description": "分包 packageCloud：云开发示例页，覆盖用户鉴权、数据库 CRUD/权限/服务端时间、云存储上传下载与临时链接、云函数调用（get-wx-context、scf-database、scf-storage、scf-openapi）。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/app.json",
+            "startLine": 214,
+            "endLine": 231,
+            "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+          }
+        ]
+      },
+      {
+        "kind": "module",
+        "subject": "miniprogram/packageExtend",
+        "description": "分包 packageExtend：扩展能力与 UI 组件示例页（form/base/operate/navigation/search/extend/adapt 分组），包含 cell、slideview、uploader、dialog、msg、searchbar、tabs、index-list 等。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/app.json",
+            "startLine": 232,
+            "endLine": 280,
+            "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+          }
+        ]
+      },
+      {
+        "kind": "module",
+        "subject": "miniprogram/packageXRFrame",
+        "description": "分包 packageXRFrame：XRFrame 场景与模型示例，包含 basic 场景系列、gltf 模型系列（损坏头盔/动画/材质/光照）与 AR 场景系列（2D/OSD/face/hand/body/shoe 等）。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/app.json",
+            "startLine": 329,
+            "endLine": 368,
+            "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+          }
+        ]
+      },
+      {
+        "kind": "module",
+        "subject": "miniprogram/packageChatTool",
+        "description": "分包 packageChatTool（independent 独立分包、renderer skyline、带 entry.js），同时被 chatTools 声明为聊天工具（entryPagePath pages/activity_create/index，群签到工具，需 scope.userLocation）。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/app.json",
+            "startLine": 24,
+            "endLine": 44,
+            "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+          }
+        ]
+      },
+      {
+        "kind": "relationship",
+        "subject": "miniprogram/app.json -> 各分包",
+        "description": "app.json 通过 preloadRule 为主包入口页配置分包预下载：page/component/index→packageComponent，page/API/index→packageAPI，page/cloud/index→packageCloud，page/extend/index→packageExtend，page/animation/index→packageSkylineRouter，packageAPI 下的 chattool 页→packageChatTool，均为 network=all。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/app.json",
+            "startLine": 440,
+            "endLine": 477,
+            "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+          }
+        ]
+      },
+      {
+        "kind": "module",
+        "subject": "cloudfunctions",
+        "description": "云函数端根目录，包含四个云函数：ARDemo、getServerDataDemo、getTempFileURL、login。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "README.md",
+            "startLine": 15,
+            "endLine": 15,
+            "sha256": "2ab96d24547cb78fd3b50ec347ca3119ef653569cbb473a7501849bcc8d0385f"
+          }
+        ]
+      },
+      {
+        "kind": "module",
+        "subject": "根 package.json",
+        "description": "仓库级 Node 配置：scripts 提供 init（sync + 安装 cloudfunctions/miniprogram 生产依赖）、lint、wxss:transform-vars、sync/pull/gco（git submodule 管理）；devDependencies 以 eslint/gulp/postcss/typescript/jest/miniprogram-automator 为主，dependencies 仅有 miniprogram-ci。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "package.json",
+            "startLine": 1,
+            "endLine": 51,
+            "sha256": "188511da6dfd3d89578df9e1c5ab5349e9a249633e297d6b5f030dfbe9f7e1cc"
+          }
+        ]
+      },
+      {
+        "kind": "relationship",
+        "subject": "根 package.json init -> cloudfunctions/ 与 miniprogram/",
+        "description": "npm run init 先执行 git submodule update --init --recursive 拉取子模块，再分别在 cloudfunctions/ 与 miniprogram/ 目录执行 npm i --production 安装运行时依赖，随后需在微信开发者工具中执行【工具-构建npm】。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "package.json",
+            "startLine": 6,
+            "endLine": 11,
+            "sha256": "188511da6dfd3d89578df9e1c5ab5349e9a249633e297d6b5f030dfbe9f7e1cc"
+          },
+          {
+            "path": "README.md",
+            "startLine": 8,
+            "endLine": 15,
+            "sha256": "2ab96d24547cb78fd3b50ec347ca3119ef653569cbb473a7501849bcc8d0385f"
+          }
+        ]
+      },
+      {
+        "kind": "module",
+        "subject": "miniprogram 其它顶层目录",
+        "description": "除分包外，miniprogram 下还有 _commons、common、component（自定义 navigation-bar）、components、app-bar、assets、image、util、workers（与 app.json 的 \"workers\": \"workers\" 对应）、skills 等支撑目录。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/app.json",
+            "startLine": 21,
+            "endLine": 23,
+            "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+          },
+          {
+            "path": "miniprogram/app.json",
+            "startLine": 528,
+            "endLine": 528,
+            "sha256": "8a4613e30b5f50cea41065f1982f3221578f698e97c1847bd512ceb1b57f940b"
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "toolCalls": [
+      "list_files",
+      "search_text",
+      "list_files",
+      "read_lines",
+      "read_lines",
+      "read_lines",
+      "read_lines",
+      "search_text",
+      "read_lines",
+      "read_lines",
+      "read_lines",
+      "read_lines",
+      "list_files",
+      "list_files",
+      "read_lines"
+    ],
+    "staleRecords": 0,
+    "model": "MiniMax-M3",
+    "provider": "minimax-cn",
+    "turns": 10,
+    "usage": {
+      "input": 15187,
+      "output": 3315,
+      "cacheRead": 70887,
+      "cacheWrite": 0
+    },
+    "elapsedMs": 91857
+  }
+}

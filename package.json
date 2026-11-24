@@ -1,0 +1,25 @@
+{
+  "name": "repository-reader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "read-repo": "node src/cli/read-repo.ts",
+    "discover": "node src/cli/discover.ts",
+    "detect": "node src/cli/detect.ts",
+    "validate": "node src/cli/validate.ts",
+    "audit": "node src/cli/audit.ts",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "1.6.0",
+    "@earendil-works/pi-ai": "1.6.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "typescript": "5.9.3"
+  }
+}

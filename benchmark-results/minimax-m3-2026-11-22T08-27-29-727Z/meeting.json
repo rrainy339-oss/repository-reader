@@ -1,0 +1,319 @@
+{
+  "goal": "为仓库做简明总览。盘点页面、会议室预订模块与云函数层，给出 6 到 10 条可引用的代表性记录，保留尚未查全的关系。",
+  "summary": "本仓库是微信小程序「云聚会助手」demo（miniprogram-cloudbase-meeting-demo），采用前后端分离的小程序 + 云开发云函数架构。小程序端位于 miniprogram/，在 app.json 中注册了三个页面：pages/index/index（聚会列表，含“我发起的/我参与的”两个 tab）、pages/detail/detail（聚会详情）、pages/create/create（新建聚会）。app.js 中通过 wx.cloud.init 初始化云开发环境（env 留空，使用默认环境）。index页面通过 wx.cloud.callFunction 调用名为 'meeting' 的云函数，按 action 区分 'login'、'getMeetings'（带 mode 参数 create/join）、'register' 三种行为，并使用 dayjs 格式化创建时间；未授权时展示授权按钮，授权后调用 'register' 上传用户信息。列表项通过 navigator 跳转 detail 页并携带 _id，同时提供新建聚会入口跳转 create 页。云函数层仅有一个 cloudfunctions/meeting（配置见 config.json/package.json，入口 index.js），README 说明需要修改其中的订阅消息模板 ID 以及两处 'implement me' 占位实现，并需先构建 NPM、开通云开发环境、上传部署 meeting 函数。detail.js 中同样存在订阅消息申请逻辑（wx.requestSubscribeMessage），是详情页参与报名的关键环节。",
+  "delta": [
+    {
+      "kind": "module",
+      "subject": "miniprogram (小程序前端)",
+      "description": "微信小程序端根目录，包含 app.js/app.json/app.wxss 全局配置、package.json、sitemap.json、style/font-awesome.wxss 图标样式，以及 pages 下的三个业务页面目录。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/app.json",
+          "startLine": 1,
+          "endLine": 20,
+          "sha256": "f1219536bd235d25448f3f54a7a331688a7613246b3b10663bda606d7d3f81dd"
+        },
+        {
+          "path": "miniprogram/app.js",
+          "startLine": 1,
+          "endLine": 20,
+          "sha256": "b8f00ad0a1eb8b7a07fa76983bfe1c47835113d24e2510da782024c74fab3252"
+        }
+      ]
+    },
+    {
+      "kind": "entry",
+      "subject": "miniprogram/app.js App.onLaunch",
+      "description": "小程序入口：检查 wx.cloud 是否可用后调用 wx.cloud.init({ traceUser: true }) 初始化云开发；env 未填写，使用默认（第一个创建）云环境；globalData 为空对象。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/app.js",
+          "startLine": 2,
+          "endLine": 20,
+          "sha256": "b8f00ad0a1eb8b7a07fa76983bfe1c47835113d24e2510da782024c74fab3252"
+        }
+      ]
+    },
+    {
+      "kind": "entry",
+      "subject": "miniprogram/pages/index/index.js Page",
+      "description": "聚会列表页逻辑：onLoad 中先调用 'helloworld' 云函数（action: getMeeting，结果未使用），随后调用 'meeting' 云函数 action=login，成功则 getMeetings；getMeetings 调用 action=getMeetings 并传 mode=tab，用 dayjs 格式化 createdAt 为 createdDisplay；switchTab 切换 create/join 模式；bindGetUserInfo 以 open-type=getUserInfo 的 userInfo 调用 action=register。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/pages/index/index.js",
+          "startLine": 1,
+          "endLine": 71,
+          "sha256": "562363c9697759e788b25bc89264256608d8844e3587cc31d409da26501439c1"
+        }
+      ]
+    },
+    {
+      "kind": "file",
+      "subject": "miniprogram/pages/index/index.wxml",
+      "description": "列表页模板：头部标题“聚会助手”，两个 tab（我发起的/我参与的）绑定 switchTab；logged 时渲染 meetings 卡片列表，含头像、标题、date time、发起人昵称与创建时间，并通过 navigator 跳转 ../detail/detail?id={{item._id}}；未登录时显示授权提示与“授权登录”按钮（open-type=getUserInfo）；已登录时显示“新建聚会”跳转 ../create/create。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/pages/index/index.wxml",
+          "startLine": 1,
+          "endLine": 48,
+          "sha256": "dfb07bc15c50be9a9dd466f1fbd7e1ce9d05783ece2f4f0a968b64d2ccce8cfa"
+        }
+      ]
+    },
+    {
+      "kind": "entry",
+      "subject": "miniprogram/pages/detail/detail.js",
+      "description": "聚会详情页脚本入口。README 指出该文件包含 wx.requestSubscribeMessage 订阅消息申请逻辑（tmplIds 待填自有 TemplateID），用于报名成功后向发起人推送通知；具体调用 meeting 云函数的 action 与数据结构本次未读取确认。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "README.md",
+          "startLine": 15,
+          "endLine": 22,
+          "sha256": "aaf477649f53e28a125fe43a1753b7168c4a42c72698374fd25c3100ba9bca1f"
+        }
+      ]
+    },
+    {
+      "kind": "entry",
+      "subject": "miniprogram/pages/create/create.js",
+      "description": "新建聚会页脚本入口，负责创建聚会的表单与提交逻辑（推测通过 wx.cloud.callFunction 调用 meeting 云函数创建会议）；本次未读取源码确认其 action 名称与字段。",
+      "basis": "inferred",
+      "evidence": [
+        {
+          "path": "miniprogram/pages/index/index.wxml",
+          "startLine": 46,
+          "endLine": 48,
+          "sha256": "dfb07bc15c50be9a9dd466f1fbd7e1ce9d05783ece2f4f0a968b64d2ccce8cfa"
+        }
+      ]
+    },
+    {
+      "kind": "module",
+      "subject": "cloudfunctions/meeting (云函数层)",
+      "description": "云开发目录下唯一的云函数模块 meeting，含 index.js 实现、config.json 配置与 package.json 依赖声明，需在开发者工具中“上传并部署（所有文件）”到云环境。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "README.md",
+          "startLine": 30,
+          "endLine": 32,
+          "sha256": "aaf477649f53e28a125fe43a1753b7168c4a42c72698374fd25c3100ba9bca1f"
+        }
+      ]
+    },
+    {
+      "kind": "relationship",
+      "subject": "miniprogram/pages/index/index.js → cloudfunctions/meeting (callFunction)",
+      "description": "列表页通过 wx.cloud.callFunction({ name: 'meeting', data: { action } }) 调用云函数，实测使用的 action 为 login、getMeetings（附带 mode=create|join）、register；返回结果含 error 字段与 list 数组。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "miniprogram/pages/index/index.js",
+          "startLine": 18,
+          "endLine": 71,
+          "sha256": "562363c9697759e788b25bc89264256608d8844e3587cc31d409da26501439c1"
+        }
+      ]
+    },
+    {
+      "kind": "file",
+      "subject": "README.md",
+      "description": "快速开始文档：修改 AppID、修改订阅消息模板 ID（cloudfunctions/meeting/index.js 与 miniprogram/pages/detail/detail.js 两处）、构建 NPM、开通云开发环境并选择环境、右键新建环境、上传部署 meeting 函数，并指出需实现 meeting 函数中的两处 'implement me' 占位逻辑。",
+      "basis": "observed",
+      "evidence": [
+        {
+          "path": "README.md",
+          "startLine": 1,
+          "endLine": 33,
+          "sha256": "aaf477649f53e28a125fe43a1753b7168c4a42c72698374fd25c3100ba9bca1f"
+        }
+      ]
+    }
+  ],
+  "unresolved": [
+    "cloudfunctions/meeting/index.js 的具体实现未读取：action 分发集合（create/join/register/login/getMeetings 等）、数据库集合名称与字段结构、订阅消息发送逻辑均未确认。",
+    "cloudfunctions/meeting/config.json 与 package.json 内容未读取：无法确认云函数内存/超时配置、依赖（如 wx-server-sdk、dayjs）版本。",
+    "miniprogram/pages/detail/detail.js 与 detail.wxml 内容未读取：详情页展示字段、报名/参与动作名与参数未确认。",
+    "miniprogram/pages/create/create.js 与 create.wxml 内容未读取：新建聚会的表单字段与提交 action 未确认。",
+    "云函数 'helloworld' 在仓库内无源码目录，其来源（模板云函数或开发者工具内置）未确认。",
+    "索引页登录态仅由前端 logged 布尔值控制，是否存在 token/会话校验机制未确认。",
+    "index 页同时存在 'register'（授权时上传 userInfo）与 'login'（onLoad）两条路径，其先后顺序与幂等性关系未确认。",
+    "项目根 project.config.json 与 miniprogram/package.json 内容未读取，NPM 构建产物与 AppID 配置位置未确认。",
+    "subscribeMessage 的模板 ID 需用户自行填入，订阅消息的触发时机（创建成功 or 报名成功）仅由 README 提示推断。",
+    "数据库权限、安全规则与索引配置（数据库目录不存在）未确认，meeting 数据是否全部存于云开发数据库未验证。",
+    "Unverified source references for miniprogram/pages/index/index.js → helloworld 云函数."
+  ],
+  "map": {
+    "version": 1,
+    "root": "D:\\codex project\\code review rewrite\\.local-bench\\miniprogram-cloudbase-meeting-demo",
+    "records": [
+      {
+        "kind": "module",
+        "subject": "miniprogram (小程序前端)",
+        "description": "微信小程序端根目录，包含 app.js/app.json/app.wxss 全局配置、package.json、sitemap.json、style/font-awesome.wxss 图标样式，以及 pages 下的三个业务页面目录。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/app.json",
+            "startLine": 1,
+            "endLine": 20,
+            "sha256": "f1219536bd235d25448f3f54a7a331688a7613246b3b10663bda606d7d3f81dd"
+          },
+          {
+            "path": "miniprogram/app.js",
+            "startLine": 1,
+            "endLine": 20,
+            "sha256": "b8f00ad0a1eb8b7a07fa76983bfe1c47835113d24e2510da782024c74fab3252"
+          }
+        ]
+      },
+      {
+        "kind": "entry",
+        "subject": "miniprogram/app.js App.onLaunch",
+        "description": "小程序入口：检查 wx.cloud 是否可用后调用 wx.cloud.init({ traceUser: true }) 初始化云开发；env 未填写，使用默认（第一个创建）云环境；globalData 为空对象。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/app.js",
+            "startLine": 2,
+            "endLine": 20,
+            "sha256": "b8f00ad0a1eb8b7a07fa76983bfe1c47835113d24e2510da782024c74fab3252"
+          }
+        ]
+      },
+      {
+        "kind": "entry",
+        "subject": "miniprogram/pages/index/index.js Page",
+        "description": "聚会列表页逻辑：onLoad 中先调用 'helloworld' 云函数（action: getMeeting，结果未使用），随后调用 'meeting' 云函数 action=login，成功则 getMeetings；getMeetings 调用 action=getMeetings 并传 mode=tab，用 dayjs 格式化 createdAt 为 createdDisplay；switchTab 切换 create/join 模式；bindGetUserInfo 以 open-type=getUserInfo 的 userInfo 调用 action=register。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/pages/index/index.js",
+            "startLine": 1,
+            "endLine": 71,
+            "sha256": "562363c9697759e788b25bc89264256608d8844e3587cc31d409da26501439c1"
+          }
+        ]
+      },
+      {
+        "kind": "file",
+        "subject": "miniprogram/pages/index/index.wxml",
+        "description": "列表页模板：头部标题“聚会助手”，两个 tab（我发起的/我参与的）绑定 switchTab；logged 时渲染 meetings 卡片列表，含头像、标题、date time、发起人昵称与创建时间，并通过 navigator 跳转 ../detail/detail?id={{item._id}}；未登录时显示授权提示与“授权登录”按钮（open-type=getUserInfo）；已登录时显示“新建聚会”跳转 ../create/create。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/pages/index/index.wxml",
+            "startLine": 1,
+            "endLine": 48,
+            "sha256": "dfb07bc15c50be9a9dd466f1fbd7e1ce9d05783ece2f4f0a968b64d2ccce8cfa"
+          }
+        ]
+      },
+      {
+        "kind": "entry",
+        "subject": "miniprogram/pages/detail/detail.js",
+        "description": "聚会详情页脚本入口。README 指出该文件包含 wx.requestSubscribeMessage 订阅消息申请逻辑（tmplIds 待填自有 TemplateID），用于报名成功后向发起人推送通知；具体调用 meeting 云函数的 action 与数据结构本次未读取确认。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "README.md",
+            "startLine": 15,
+            "endLine": 22,
+            "sha256": "aaf477649f53e28a125fe43a1753b7168c4a42c72698374fd25c3100ba9bca1f"
+          }
+        ]
+      },
+      {
+        "kind": "entry",
+        "subject": "miniprogram/pages/create/create.js",
+        "description": "新建聚会页脚本入口，负责创建聚会的表单与提交逻辑（推测通过 wx.cloud.callFunction 调用 meeting 云函数创建会议）；本次未读取源码确认其 action 名称与字段。",
+        "basis": "inferred",
+        "evidence": [
+          {
+            "path": "miniprogram/pages/index/index.wxml",
+            "startLine": 46,
+            "endLine": 48,
+            "sha256": "dfb07bc15c50be9a9dd466f1fbd7e1ce9d05783ece2f4f0a968b64d2ccce8cfa"
+          }
+        ]
+      },
+      {
+        "kind": "module",
+        "subject": "cloudfunctions/meeting (云函数层)",
+        "description": "云开发目录下唯一的云函数模块 meeting，含 index.js 实现、config.json 配置与 package.json 依赖声明，需在开发者工具中“上传并部署（所有文件）”到云环境。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "README.md",
+            "startLine": 30,
+            "endLine": 32,
+            "sha256": "aaf477649f53e28a125fe43a1753b7168c4a42c72698374fd25c3100ba9bca1f"
+          }
+        ]
+      },
+      {
+        "kind": "relationship",
+        "subject": "miniprogram/pages/index/index.js → cloudfunctions/meeting (callFunction)",
+        "description": "列表页通过 wx.cloud.callFunction({ name: 'meeting', data: { action } }) 调用云函数，实测使用的 action 为 login、getMeetings（附带 mode=create|join）、register；返回结果含 error 字段与 list 数组。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "miniprogram/pages/index/index.js",
+            "startLine": 18,
+            "endLine": 71,
+            "sha256": "562363c9697759e788b25bc89264256608d8844e3587cc31d409da26501439c1"
+          }
+        ]
+      },
+      {
+        "kind": "file",
+        "subject": "README.md",
+        "description": "快速开始文档：修改 AppID、修改订阅消息模板 ID（cloudfunctions/meeting/index.js 与 miniprogram/pages/detail/detail.js 两处）、构建 NPM、开通云开发环境并选择环境、右键新建环境、上传部署 meeting 函数，并指出需实现 meeting 函数中的两处 'implement me' 占位逻辑。",
+        "basis": "observed",
+        "evidence": [
+          {
+            "path": "README.md",
+            "startLine": 1,
+            "endLine": 33,
+            "sha256": "aaf477649f53e28a125fe43a1753b7168c4a42c72698374fd25c3100ba9bca1f"
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "toolCalls": [
+      "list_files",
+      "list_files",
+      "list_files",
+      "list_files",
+      "list_files",
+      "list_files",
+      "read_lines",
+      "list_files",
+      "list_files",
+      "list_files",
+      "read_lines",
+      "read_lines",
+      "read_lines",
+      "read_lines",
+      "read_lines"
+    ],
+    "staleRecords": 0,
+    "model": "MiniMax-M3",
+    "provider": "minimax-cn",
+    "turns": 9,
+    "usage": {
+      "input": 5762,
+      "output": 2705,
+      "cacheRead": 24422,
+      "cacheWrite": 0
+    },
+    "elapsedMs": 18332
+  }
+}

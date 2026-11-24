@@ -1,0 +1,95 @@
+{
+  "model": "MiniMax-M3",
+  "provider": "minimax-cn",
+  "results": [
+    {
+      "name": "quickstart",
+      "project": "miniprogram-quickstart",
+      "sha": "48892c3762901ebf09875b221da1c24c6246982b",
+      "fileCount": 15,
+      "records": 9,
+      "delta": 9,
+      "unverified": 1,
+      "unresolved": 8,
+      "tools": 11,
+      "turns": 5,
+      "elapsedMs": 10921,
+      "usage": {
+        "input": 3657,
+        "output": 1568,
+        "cacheRead": 7281,
+        "cacheWrite": 0
+      },
+      "report": "D:\\codex project\\code review rewrite\\benchmark-results\\minimax-m3-2026-11-22T08-27-29-727Z\\quickstart.json"
+    },
+    {
+      "name": "meeting",
+      "project": "miniprogram-cloudbase-meeting-demo",
+      "sha": "82b0a26cf7975bb36e424c050c737eb4c6a413b9",
+      "fileCount": 26,
+      "records": 9,
+      "delta": 9,
+      "unverified": 1,
+      "unresolved": 11,
+      "tools": 15,
+      "turns": 9,
+      "elapsedMs": 18332,
+      "usage": {
+        "input": 5762,
+        "output": 2705,
+        "cacheRead": 24422,
+        "cacheWrite": 0
+      },
+      "report": "D:\\codex project\\code review rewrite\\benchmark-results\\minimax-m3-2026-11-22T08-27-29-727Z\\meeting.json"
+    },
+    {
+      "name": "demo",
+      "project": "miniprogram-demo",
+      "sha": "0fe5c7df8e90582dd0b89e283df7fe32e04413f9",
+      "fileCount": 3104,
+      "records": 13,
+      "delta": 13,
+      "unverified": 7,
+      "unresolved": 14,
+      "tools": 15,
+      "turns": 10,
+      "elapsedMs": 91857,
+      "usage": {
+        "input": 15187,
+        "output": 3315,
+        "cacheRead": 70887,
+        "cacheWrite": 0
+      },
+      "report": "D:\\codex project\\code review rewrite\\benchmark-results\\minimax-m3-2026-11-22T08-27-29-727Z\\demo.json"
+    },
+    {
+      "name": "meeting-followup",
+      "project": "miniprogram-cloudbase-meeting-demo",
+      "sha": "82b0a26cf7975bb36e424c050c737eb4c6a413b9",
+      "fileCount": 26,
+      "records": 12,
+      "delta": 3,
+      "unverified": 2,
+      "unresolved": 6,
+      "tools": 10,
+      "turns": 7,
+      "elapsedMs": 36688,
+      "usage": {
+        "input": 20222,
+        "output": 2954,
+        "cacheRead": 22016,
+        "cacheWrite": 0
+      },
+      "repairedOutput": true,
+      "report": "D:\\codex project\\code review rewrite\\benchmark-results\\minimax-m3-2026-11-22T08-27-29-727Z\\meeting-followup.json"
+    }
+  ],
+  "failures": [
+    {
+      "project": "meeting",
+      "error": "The model did not return a valid repository reading result.",
+      "stage": "meeting-followup",
+      "recovered": true
+    }
+  ]
+}
