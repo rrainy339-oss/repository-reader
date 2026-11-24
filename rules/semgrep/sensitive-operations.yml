@@ -1,0 +1,88 @@
+rules:
+  - id: review.command-operation
+    languages: [javascript, typescript]
+    severity: INFO
+    message: Process creation or command execution. Review the command and argument sources.
+    metadata:
+      category: command_execution
+    pattern-either:
+      - pattern: child_process.exec(...)
+      - pattern: child_process.execFile(...)
+      - pattern: child_process.spawn(...)
+      - pattern: child_process.execSync(...)
+      - pattern: child_process.spawnSync(...)
+  - id: review.dynamic-code
+    languages: [javascript, typescript]
+    severity: INFO
+    message: Dynamic code evaluation. Review the source and constraints of the evaluated text.
+    metadata:
+      category: dynamic_execution
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: vm.runInNewContext(...)
+      - pattern: vm.runInThisContext(...)
+  - id: review.network-operation
+    languages: [javascript, typescript]
+    severity: INFO
+    message: Outbound request or client request site. Review the destination and data boundary.
+    metadata:
+      category: network
+    pattern-either:
+      - pattern: fetch(...)
+      - pattern: axios(...)
+      - pattern: axios.request(...)
+      - pattern: https.request(...)
+      - pattern: http.request(...)
+      - pattern: wx.request(...)
+      - pattern: wx.cloud.callFunction(...)
+  - id: review.database-operation
+    languages: [javascript, typescript]
+    severity: INFO
+    message: Possible database operation. Verify the client type and applicable input or authorization controls.
+    metadata:
+      category: database
+    pattern-either:
+      - pattern: $CLIENT.query(...)
+      - pattern: $CLIENT.execute(...)
+      - pattern: $COLLECTION.find(...)
+      - pattern: $COLLECTION.updateOne(...)
+      - pattern: $COLLECTION.deleteOne(...)
+  - id: review.file-operation
+    languages: [javascript, typescript]
+    severity: INFO
+    message: File access operation. Review which inputs determine the path and permitted access.
+    metadata:
+      category: filesystem
+    pattern-either:
+      - pattern: fs.readFile(...)
+      - pattern: fs.readFileSync(...)
+      - pattern: fs.writeFile(...)
+      - pattern: fs.writeFileSync(...)
+      - pattern: fs.promises.readFile(...)
+      - pattern: fs.promises.writeFile(...)
+      - pattern: fs.createReadStream(...)
+      - pattern: fs.createWriteStream(...)
+  - id: review.sensitive-data-access
+    languages: [javascript, typescript]
+    severity: INFO
+    message: Environment configuration access. Check how potentially sensitive values are used and exposed.
+    metadata:
+      category: sensitive_data
+    pattern-either:
+      - pattern: process.env.$KEY
+      - pattern: process.env[$KEY]
+  - id: review.wechat-cloud-data
+    languages: [javascript, typescript]
+    severity: INFO
+    message: Cloud-style data operation. Verify the client and review ownership, permissions and selected fields.
+    metadata:
+      category: cloud_database
+    pattern-either:
+      - pattern: $DB.collection(...).doc(...).get(...)
+      - pattern: $DB.collection(...).doc(...).update(...)
+      - pattern: $DB.collection(...).doc(...).remove(...)
+      - pattern: $DB.collection(...).where(...).get(...)
+      - pattern: $DB.collection(...).where(...).update(...)
+      - pattern: $DB.collection(...).where(...).remove(...)
+      - pattern: $DB.collection(...).add(...)

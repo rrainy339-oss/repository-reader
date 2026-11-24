@@ -69,7 +69,7 @@ test('Main dispatches all four Pi sessions and replans from coverage and evidenc
     call('read_lines', handler),
     reply({ verdict: 'needs_evidence', summary: '调用端未确定服务层状态。', scope: '当前源码',
       evidence: [{ id: 'own', source: handler, observation: '状态来自服务。' }], neededEvidence: [gap] }),
-    call('run_discover'),
+    call('run_discover', { phase: 'incremental', focus: '追查其他入口和共享创建服务' }),
     ({ messages }) => {
       const users = messages.filter(({ role }) => role === 'user');
       assert.equal(users.length, 1);
@@ -77,8 +77,24 @@ test('Main dispatches all four Pi sessions and replans from coverage and evidenc
       assert.ok(typeof content !== 'string' && content[0].type === 'text');
       const input = JSON.parse(content[0].text);
       assert.equal(input.phase, 'incremental');
-      assert.deepEqual(input.feedback.map((item: { kind: string }) => item.kind), ['discovery_lead', 'verification_gap']);
-      feedbackIds = input.feedback.map((item: { id: string }) => item.id);
+      assert.equal(input.focus, '追查其他入口和共享创建服务');
+      assert.equal(input.newLeads[0].taskId, 'task-1');
+      assert.equal(input.newLeads[0].question, '其他入口是否复用创建服务？');
+      const reference = input.newLeads[0].evidence[0];
+      assert.deepEqual({ path: reference.path, startLine: reference.startLine, endLine: reference.endLine }, handler);
+      assert.match(reference.sha256, /^[a-f0-9]{64}$/);
+      assert.equal(input.relevantFeedback[0].kind, 'verification_gap');
+      assert.equal(input.coverageSummary.needs_evidence, 1);
+      feedbackIds = [...input.newLeads, ...input.relevantFeedback].map((item: { id: string }) => item.id);
+      return call('read_lines', handler);
+    },
+    call('query_tasks', { targetId: task.targetId, query: '默认状态' }),
+    ({ messages }) => {
+      const result = messages.findLast((item) => item.role === 'toolResult' && item.toolName === 'query_tasks');
+      assert.ok(result?.role === 'toolResult' && !result.isError);
+      const block = result.content.find((item) => item.type === 'text');
+      assert.ok(block);
+      assert.equal(JSON.parse(block.text).items[0].goal.description, goals[0].description);
       return call('query_coverage', { gapsOnly: true });
     },
     () => reply({ actions: [{ kind: 'supplement_task', taskId: 'task-1', note: gap, reason: '复核后补查', feedbackIds },
@@ -100,6 +116,8 @@ test('Main dispatches all four Pi sessions and replans from coverage and evidenc
   assert.deepEqual(result.plans[0].actions[0].feedbackIds, []);
   assert.equal(result.tasks[0].attempts[0].validations[0].verdict, 'needs_evidence');
   assert.deepEqual(result.tasks[0].followUp, [gap]);
+  assert.deepEqual(result.feedback[0].evidence, result.tasks[0].attempts[0].detection.leads[0].evidence);
+  assert.ok(result.tasks[0].action.discoverySources.some(({ kind }) => kind === 'detection_lead'));
   assert.equal(result.pending.pendingTasks[0].id, 'task-1');
   assert.equal(result.coverage[0].status, 'needs_evidence');
   assert.equal(result.coverage[1].status, 'unplanned');

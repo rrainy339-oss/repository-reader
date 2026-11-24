@@ -5,6 +5,7 @@ import { auditGoalSchema, nonempty as text, taskTargetSchema, verifyTaskTarget }
 import { createQueryMapTool } from '../repository/map-tools.ts';
 import { mapSchema, repositoryRecordId, type RepositoryMap } from '../repository/map.ts';
 import { createRepositoryTools, savedSourceRangeSchema, sourceRangeSchema, verifyReadRange } from '../repository/repository-tools.ts';
+import { stableId } from '../repository/source-symbols.ts';
 import { Repository, type SourceLines } from '../repository/repository.ts';
 import { sessionBudget, type SessionRequest } from '../runtime/budget.ts';
 import { runStructuredAgent, toolPageBytes } from '../runtime/agent-runtime.ts';
@@ -123,10 +124,18 @@ export async function detectTask(request: DetectionRequest, models: Models, mode
     unresolved.push('A candidate was withheld because its evidence references could not be established.');
     return false;
   });
-  const leads = draft.leads.filter((lead) => {
-    if (hasVerifiedEvidence(lead.evidenceIds)) return true;
-    unresolved.push('A related lead was withheld because it had no verified source references.');
-    return false;
+  const evidenceById = new Map(evidence.map(({ id, source }) => [id, source]));
+  const leads = draft.leads.flatMap((lead) => {
+    if (!hasVerifiedEvidence(lead.evidenceIds)) {
+      unresolved.push('A related lead was withheld because it had no verified source references.');
+      return [];
+    }
+    const cited = new Map(lead.evidenceIds.map((id) => {
+      const source = evidenceById.get(id)!;
+      return [JSON.stringify([source.path, source.startLine, source.endLine, source.sha256]), source];
+    }));
+    const id = stableId('lead', [taskId, lead.question, lead.reason, [...cited.keys()].sort()]);
+    return [{ ...lead, id, sourceTaskId: taskId, evidence: [...cited.values()] }];
   });
 
   let assessment = draft.assessment;

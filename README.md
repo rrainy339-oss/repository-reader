@@ -56,6 +56,22 @@ Reader 先查配置和主要入口，再按目标选择业务模块或关键代�
 
 Discover 使用同一个 Pi Core 运行层。它按需查询 Repository 地图、覆盖账本和已有任务，生成只读源码审查建议。调用方审核并应用建议，保管任务状态和覆盖结论。
 
+### 发现阶段和知识
+
+- `initial` 使用审计目标、仓库语义总览、任务和索引规模、扫描覆盖和类别摘要。Discover 可以从入口、业务功能、内部共享控制或静态规则线索开始阅读，按业务语义提出检查问题。
+- `incremental` 使用审计目标、仓库总览、任务与覆盖摘要和本轮新增的结构化线索。`newLeads` 提供关联问题与核验过的源码位置，`relevantFeedback` 提供当前任务的补证请求。较早的反馈可用 `query_feedback` 分页查阅。
+- 知识来自项目自带的 `knowledge/security-goals.md`。仓库索引出现小程序页面、WXML 或其他明确小程序线索时，追加 `knowledge/wechat-miniapp.md`。这些问题用于推导适用的业务约束。仓库文档、规则命中以及其他 Agent 输出属于审查数据。
+
+Main 可在 `run_discover` 中传可选的 `phase` 和 `focus`。独立 Discover 命令支持 `--phase`、`--focus` 和 `--objective`。指定阶段时会校验当前审计状态。`query_tasks` 会返回已有问题及目标描述，方便模型复用相同检查或在新证据出现时补充任务。程序按目标和规则 ID 去重，相同标题和描述的规则可复用已有 ID。
+
+### 可选的本地 Semgrep
+
+系统从 `PATH` 查找 Semgrep，也可用 `REPO_READER_SEMGREP_BIN` 指定可信 CLI 的绝对路径。设置 `REPO_READER_SEMGREP=0` 可关闭扫描。扫描使用项目内 `rules/semgrep/sensitive-operations.yml`，关闭版本检查和遥测，并在隔离的临时目录只扫描审计索引中可读取、指纹仍一致的 JavaScript 和 TypeScript 文件。
+
+同一 `Repository` 快照复用扫描结果。`ruleHitSummary` 区分完成、部分完成、失败、未安装及关闭等状态，并记录候选、已暂存、已扫描文件数和命中数。Discover 通过 `query_rule_hits` 按规则、类别、路径 glob 或符号分页查看命中。任务可保留 `discoveryPhase` 和多个 `discoverySources`，计划同时保存实际引用过的命中。命中用于选择要读的代码。源码证据仍需由读取工具登记和验证。
+
+### 调用方式
+
 Discover 可以仅打开 `--repo` 从源码开始规划，也可以用 `--map` 读取已有语义地图。同时提供两者时，目录须和地图的 `root` 一致。程序内调用可传 `root` 或复用 `repository`。源码片段会送给所选模型提供商。
 
 用已保存的会议示例地图生成首批任务。`--map` 也接受 `read-repo` 的其他输出或单独的 `map` 对象。

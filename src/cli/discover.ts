@@ -1,5 +1,5 @@
 import { parseArgs } from 'node:util';
-import { discoverStateSchema, discoverTasks } from '../agents/discover.ts';
+import { discoveryPhaseSchema, discoverStateSchema, discoverTasks } from '../agents/discover.ts';
 import { mapSchema } from '../repository/map.ts';
 import { budgetFlags, budgetFromFlags, budgetHelp, getRuntime, loadJson, reportCliError, saveJson } from './common.ts';
 
@@ -8,6 +8,9 @@ const help = `Usage: npm run --silent discover -- [--map <repository JSON>] [--r
 Options:
   --map <file>                Optional Repository CLI output or raw map object. Supply --repo, --map, or both.
   --state <file>              Optional goals, coverage, tasks, and feedback.
+  --phase <initial|incremental> Explicit planning phase, checked against state.
+  --focus <text>              Optional focus for this planning pass.
+  --objective <text>          Optional overall audit objective.
   --repo <directory>         Enable source reading and index tools in the repository used for the map.
   --provider <name>           openai, anthropic, minimax, or minimax-cn. Default: openai.
   --out <file>                Write proposals as JSON to a new file. Default: stdout.
@@ -25,6 +28,7 @@ async function main() {
   const { values } = parseArgs({ options: {
     ...budgetFlags,
     map: { type: 'string' }, state: { type: 'string' }, repo: { type: 'string' }, provider: { type: 'string' }, model: { type: 'string' },
+    phase: { type: 'string' }, focus: { type: 'string' }, objective: { type: 'string' },
     out: { type: 'string' }, 'max-actions': { type: 'string' }, 'max-tool-calls': { type: 'string' },
     'timeout-ms': { type: 'string' }, help: { type: 'boolean' },
   } });
@@ -42,7 +46,8 @@ async function main() {
   const delta = envelope && 'delta' in envelope ? mapSchema.shape.records.parse(envelope.delta) : undefined;
   const result = await discoverTasks({
     root: values.repo, map: mapJson === undefined ? undefined : mapSchema.parse(envelope ? envelope.map : mapJson),
-    delta, state: discoverStateSchema.parse(stateJson),
+    delta, state: discoverStateSchema.parse(stateJson), phase: discoveryPhaseSchema.optional().parse(values.phase),
+    focus: values.focus, auditObjective: values.objective,
     maxActions: values['max-actions'] === undefined ? undefined : Number(values['max-actions']),
     maxToolCalls: values['max-tool-calls'] === undefined ? undefined : Number(values['max-tool-calls']),
     budget: budgetFromFlags(values),

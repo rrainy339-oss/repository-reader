@@ -188,6 +188,15 @@ export class Repository {
     }
   }
 
+  async readIndexedSource(path: string, signal?: AbortSignal) {
+    const indexed = (await this.index).files.get(path);
+    if (!indexed?.contentHash) throw new Error('The file is outside the readable index snapshot.');
+    const source = await this.readText(path, signal);
+    const sha256 = fingerprint(source.bytes);
+    if (sha256 !== indexed.contentHash) throw new Error('The indexed source changed.');
+    return { bytes: source.bytes, sha256, totalLines: source.lines.length };
+  }
+
   private async *files(path: string, signal?: AbortSignal, isRoot = true): AsyncGenerator<string> {
     signal?.throwIfAborted();
     let entries;
