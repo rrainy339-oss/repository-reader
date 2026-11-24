@@ -17,7 +17,7 @@ export function createQueryMapTool(records: ReadonlyMap<string, MapRecord>, chan
       const needle = query?.toLowerCase();
       const matched = [...records].filter(([recordId, record]) => (!kind || record.kind === kind)
         && (!onlyChanged || changed.has(recordId))
-        && (!needle || [record.subject, record.description, ...record.evidence.map((ref) => ref.path)]
+        && (!needle || [recordId, record.subject, record.description, ...record.evidence.map((ref) => ref.path)]
           .some((value) => value.toLowerCase().includes(needle))));
       const end = offset + 12;
       return toolResult({ total: matched.length, nextOffset: end < matched.length ? end : null,

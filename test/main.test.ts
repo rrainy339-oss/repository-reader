@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,8 +34,19 @@ test('Main dispatches all four Pi sessions and replans from coverage and evidenc
     call('run_repository'),
     call('read_lines', handler),
     reply({ summary: '定位入口', records: [entry], unresolved: [] }),
-    call('run_discover'),
-    call('query_map'),
+    () => {
+      writeFileSync(join(root, 'created-between-agents.js'), 'function addedLater() {}');
+      return call('run_discover');
+    },
+    call('query_files', { scope: 'created-between-agents.js' }),
+    ({ messages }) => {
+      const result = messages.findLast((item) => item.role === 'toolResult' && item.toolName === 'query_files');
+      assert.ok(result?.role === 'toolResult' && !result.isError);
+      const block = result.content.find((item) => item.type === 'text');
+      assert.ok(block);
+      assert.equal(JSON.parse(block.text).total, 0);
+      return call('query_map');
+    },
     reply({ actions: [task, { kind: 'request_repository_read', targetId: task.targetId,
       question: '梳理创建服务的关系。', reason: '补全模块地图' }] }),
     call('run_repository', { requestId: 'read-1' }),
@@ -80,6 +92,7 @@ test('Main dispatches all four Pi sessions and replans from coverage and evidenc
   assert.deepEqual(result.failures, []);
   assert.equal(result.status, 'budget_exhausted');
   assert.equal(result.subagentCalls, 6);
+  assert.equal(result.indexSummary.totalFiles, 1);
   assert.equal(result.readJobs[0].status, 'completed');
   assert.deepEqual(result.map?.records.map(({ subject }) => subject), ['createRecord', 'service']);
   assert.deepEqual(result.plans.map(({ phase }) => phase), ['initial', 'incremental']);

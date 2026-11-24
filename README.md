@@ -1,13 +1,32 @@
 # Repository Agent
 
-用 Pi Agent Core 阅读仓库。每次调用接收阅读目标、可选的起始位置和已有地图。模型按需列文件、搜索文本和阅读源码行，逐步补充项目结构。
+用 Pi Agent Core 阅读仓库。打开仓库时，程序先扫描文件并建立文件、符号和入口索引。Repository Agent 接收阅读目标、起始位置和已有地图，按需查询索引和读取源码，归纳项目结构和业务行为。
 
 ## 源码目录
 
 - `src/agents/` 存放 Main 和四个子 Agent 的提示词、工具配置和角色逻辑。
-- `src/repository/` 存放仓库读取、源码证据、地图结构和查询工具。
+- `src/repository/` 存放安全读取、Tree-sitter 定义提取、入口与文件索引、导航工具和语义地图。
 - `src/runtime/` 封装 Pi 会话、调用预算、超时和结构化输出。
 - `src/cli/` 存放各 npm 命令入口和共用的参数与文件处理。
+
+## 共享索引和导航
+
+每次独立 CLI 调用都会为指定仓库生成一个内存快照。`audit` 在初始化时构建一次，并将同一个 `Repository` 实例传给 Repository、Discover、Detection 和 Validator。模型只收到索引计数、主要目录、配置文件候选以及工具按页返回的结果。
+
+- **文件索引**记录仓库相对路径、语言、字节数、SHA-256 和解析状态。读取和扫描共用路径检查与过滤规则，排除链接、凭据目录、依赖和常见构建目录。超限、二进制或无法读取的文件标为 `skipped`，未取得的哈希保留为空。`failed` 和 `unsupported` 文本仍可阅读和搜索。
+- **符号索引**使用 Tree-sitter WASM 解析 JavaScript、TypeScript 和 TSX。它记录命名函数、类、方法、常见绑定表达式和作用域，行号从 1 开始且包含首尾。ID 由文件路径、作用域、名称和同名定义的出现顺序确定。
+- **入口索引**识别微信小程序主包和分包页面、云函数目录和 CommonJS 入口、`Page` 处理函数、静态 WXML 事件绑定，以及 `wx.cloud.callFunction`、`wx.request` 调用位置。调用位置单独标为 `external_call`。这些条目只说明源码中可见的配置和语法，调用目标、动态路由和部署可达性由后续阅读确定。
+
+| 工具 | 用法 |
+| --- | --- |
+| `query_files` | 按相对路径范围、glob 或解析状态分页查询文件。 |
+| `query_entries` | 按入口 ID、路径、类型或 `unread`、`partial`、`summarized` 分页查询入口。Reader 实际读取后可标为 `partial`，有语义地图记录及当前证据时可标为 `summarized`。 |
+| `get_file_symbols` | 用 `filePath` 查询文件中的符号及行号。 |
+| `search_symbols` | 用 `name` 查询定义，可提供 `scope`、`filePattern`、`kind` 和 `match`。模糊查询优先返回精确匹配，并保留同名定义。 |
+| `get_symbol_code` | 用 `symbolId` 读取当前代码。可指定符号内的绝对行号，长定义可用 `nextStartLine` 续读。返回范围沿用 `read_lines` 的安全检查和证据登记。 |
+| `list_files`、`search_text`、`read_lines` | 保留按目录浏览、字面量搜索和按行读取。全文搜索遇到扫描或结果上限时返回 `limitReason` 和 `nextCursor`，可在相同查询与范围内将该值作为 `cursor` 继续。 |
+
+索引位置以打开仓库时的文件为准。`get_symbol_code` 会核对当前文件哈希，文件变更时可以通过 `read_lines` 阅读当前内容，或重新打开仓库生成新索引。索引提供定义与入口的位置，模块之间的关系由 Agent 对照源码判断。
 
 ## 运行
 
@@ -25,7 +44,9 @@ npm.cmd run --silent read-repo -- --repo 'D:/my-mini-program' --provider anthrop
 npm.cmd run --silent read-repo -- --repo 'D:/my-mini-program' --provider anthropic --model claude-sonnet-4-6 --map overview.json --focus paymentCallback --goal '深入阅读支付模块，梳理回调到订单状态更新的关系' --out payment.json
 ```
 
-输出包含 `summary`、本次新增或修订的 `delta`、合并后的 `map`、`unresolved` 和 `run`。地图记录包含文件、行号和内容指纹。本次记录的引用必须落在工具实际读取的行上。再次读取时，宿主重新核对旧记录的引用文件，变化或缺失的引用会使旧记录失效。源码引用检查确认位置与文件内容，业务归类与关系仍由模型解释，并标记为观察或推断。
+Reader 先查配置和主要入口，再按目标选择业务模块或关键代码阅读。它使用语义地图记录模块职责、身份与权限机制、数据访问和信任边界。未阅读的文件和入口继续保留在索引里。
+
+输出包含 `summary`、本次新增或修订的 `delta`、合并后的 `map`、`unresolved`、`indexSummary` 和 `run`。地图记录包含文件、行号和内容指纹。可用 `anchor` 关联文件、符号或入口，由宿主核对索引和实际读取的证据，再生成稳定的地图记录 ID。旧版 v1 地图仍可读取，已有无锚点记录继续使用 `kind:subject`。地图可保存项目级 `summary` 和最近一次阅读的缺口。定向阅读沿用已有总览。再次读取时，宿主会让引用文件变化或缺失的旧记录失效。
 
 `src/agents/reader.ts` 的 `readRepository` 也可在程序内直接调用，调用方负责保存返回的地图并决定下一次阅读目标。命令读取当前目录内容。需要可重复的版本结果时，先指定一个内容稳定的 checkout。文件工具跳过链接、常见凭据路径、大文件和非 UTF-8 文件。搜索有扫描上限，返回 `truncated` 时可缩小目录后继续查询。
 
@@ -33,7 +54,7 @@ npm.cmd run --silent read-repo -- --repo 'D:/my-mini-program' --provider anthrop
 
 Discover 使用同一个 Pi Core 运行层。它按需查询 Repository 地图、覆盖账本和已有任务，生成只读源码审查建议。调用方审核并应用建议，保管任务状态和覆盖结论。
 
-传入 `--repo` 可额外启用 `read_lines`，供 Discover 核对可能影响派单的源码细节。目录须和地图的 `root` 一致。工具使用仓库相对路径，继承 Repository Agent 的读取范围和文件限制。程序内调用时传 `root`。源码片段会送给所选模型提供商。未指定仓库时，已有地图仍可单独用于规划。
+传入 `--repo` 可启用共享导航工具，供 Discover 查询尚未阅读的入口及可能影响派单的源码。目录须和地图的 `root` 一致。程序内调用可传 `root` 或复用 `repository`。源码片段会送给所选模型提供商。仅提供地图时，仍可按已有语义记录规划。
 
 用已保存的会议示例地图生成首批任务。`--map` 也接受 `read-repo` 的其他输出或单独的 `map` 对象。
 
@@ -50,13 +71,13 @@ npm.cmd run --silent discover -- --map 'benchmark-results/minimax-m3-2026-11-22T
 | `tasks` | `id`、`targetId`、`goalId`、`question`、`status`。状态包括 `pending`、`in_progress`、`completed`、`blocked`。 |
 | `feedback` | `id`、`kind`（`discovery_lead` 或 `verification_gap`）、`note`，可附 `recordIds` 和 `taskId`。 |
 
-地图记录的 ID 是 `kind:subject`。例如会议示例里的 `entry:miniprogram/pages/detail/detail.js`。重复调用时传入当前地图和当前任务状态，确保状态中的 ID 仍能在此快照中找到。
+派单使用 `query_map` 返回的 `targetId`。旧版会议示例中有 `entry:miniprogram/pages/detail/detail.js`，新记录可能使用锚点生成的 ID。重复调用时传入当前地图和当前任务状态，确保状态中的 ID 仍能在此快照中找到。
 
 输出 `actions` 含 `create_task`、`supplement_task` 或 `request_repository_read`。同一入口与安全目标已有任务时，新的检查内容可以转为补充建议。同轮重复提议会合并来源。宿主从输入地图附上已有源码引用，并在 `discarded` 给出被拒建议的原因。`run` 记录用量与查询工具。程序化入口是 `src/agents/discover.ts` 的 `discoverTasks`。
 
 ## Detection Agent
 
-一次调查一个源码审计任务。Detection 自行调用共享的 `list_files`、`search_text` 和 `read_lines`，提供地图时也可以用 `query_map` 定位相关上下文。地图和 Discover 的引用只提供阅读起点；正式证据使用本次实际读取且文件内容未变化的源码范围。
+一次调查一个源码审计任务。Detection 可以使用共享导航工具定位定义和读取实现，提供地图时也可以用 `query_map` 定位相关上下文。地图和 Discover 的引用提供阅读起点。正式证据来自本次通过 `read_lines` 或 `get_symbol_code` 实际读取且文件内容未变化的源码范围。
 
 把 Discover 输出的 `plan.json` 作为输入。`--action-index` 按整个 `actions` 数组从 1 开始计数，所选动作须为 `create_task`。只有一个这类动作时可以省略索引。`--repo` 应指向生成地图时使用的同一目录。
 
@@ -70,7 +91,7 @@ npm.cmd run --silent detect -- --repo 'D:/my-mini-program' --task plan.json --ac
 
 ## Validator Agent
 
-每次接收一条 Detection 候选并独立复核源码。`--candidate-index` 从 1 开始，只有一个候选时可以省略。从原候选中提取相关证据，核对文件指纹后，再开启新的 Pi 会话。可用工具是共享的 `read_lines`、`search_text`、`list_files`，以及提供地图时的 `query_map`。
+每次接收一条 Detection 候选并独立复核源码。`--candidate-index` 从 1 开始，只有一个候选时可以省略。从原候选中提取相关证据，核对文件指纹后，再开启新的 Pi 会话。Validator 使用共享导航工具，提供地图时也可查询 `query_map`。
 
 ```powershell
 npm.cmd run --silent validate -- --repo 'D:/my-mini-program' --detection detection.json --candidate-index 1 --map overview.json --provider minimax-cn --model MiniMax-M3 --out validation.json
@@ -92,7 +113,7 @@ Main 自己运行在 Pi Core 上，可以用 `run_repository`、`run_discover`�
 npm.cmd run --silent audit -- --repo 'D:/my-mini-program' --state 'examples/discover-state.json' --provider minimax-cn --model MiniMax-M3 --out audit.json
 ```
 
-`--state` 读取 `goals`，每次运行从新的地图和任务池开始。`--goal` 可以补充仓库初读目标，`--context` 可以提供 Validator 所用的规则及来源。默认最多调度 16 次子 Agent，总时限 600000 毫秒，可用 `--max-subagent-calls` 和 `--timeout-ms` 调整。超时时会给正在运行的子会话传递取消信号。
+`--state` 读取 `goals`，每次运行从新的地图和任务池开始。`--goal` 可以补充仓库初读目标，`--context` 可以提供 Validator 所用的规则及来源。仓库索引在启动 Agent 计时前构建。默认最多调度 16 次子 Agent，Agent 总执行时限为 600000 毫秒，可用 `--max-subagent-calls` 和 `--timeout-ms` 调整。超时时会给正在运行的子会话传递取消信号。
 
 - Repository 支持初读和按 Discover 的请求补读。补读沿用已有地图，并把新增和变化的记录交给下一轮 Discover。
 - Discover 结合当前地图、任务池、覆盖状态和新增线索发现适用的「目标 × 安全要求」缺口。同一组合沿用已有任务，补查新证据时可重新排队，每个任务最多启动两次 Detection。

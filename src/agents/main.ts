@@ -57,7 +57,8 @@ As source context, investigation results, or verification gaps arrive, run_disco
 Stop when eligible work is drained or further work cannot proceed. Return only {"summary":"short source review status in the language of the stated goals"}. Do not claim complete repository coverage or claim evidence not in the recorded results.`;
 
 export async function runMain(request: MainRequest, models: Models, model: Model<Api>) {
-  const { root } = await Repository.open(request.root);
+  const repository = await Repository.open(request.root);
+  const { root } = repository;
   const goal = z.string().trim().min(1).max(4000).parse(request.goal ?? defaultGoal);
   const goals = discoverStateSchema.shape.goals.parse(request.goals);
   if (new Set(goals.map(({ id }) => id)).size !== goals.length) throw new Error('Audit goal IDs must be unique.');
@@ -208,7 +209,7 @@ export async function runMain(request: MainRequest, models: Models, model: Model
         const record = job && records.get(job.action.targetId);
         if (job && !record) throw new Error('The focused read target is not in the current map.');
         return async (signal) => {
-          const { map: nextMap, ...reading } = await readRepository({ root, goal: job?.action.question ?? goal,
+          const { map: nextMap, ...reading } = await readRepository({ root, repository, goal: job?.action.question ?? goal,
             focus: record ? [record.subject] : undefined, previousMap: map, signal }, models, model);
           signal?.throwIfAborted();
           if (job) job.status = 'completed';
@@ -232,7 +233,7 @@ export async function runMain(request: MainRequest, models: Models, model: Model
             .map((item) => ({ ...item, recordIds: item.recordIds.filter((id) => records.has(id)) }));
           const coverage = active.map(({ action, coverage: status }) =>
             ({ targetId: action.targetId, goalId: action.goalId, status }));
-          const plan = await discoverTasks({ root, map: currentMap, delta: [...changedRecords.values()],
+          const plan = await discoverTasks({ root, repository, map: currentMap, delta: [...changedRecords.values()],
             maxActions: planBatchSize, signal,
             state: { goals, coverage, feedback: inbox, tasks: active.map(({ id, action, status }) =>
               ({ id, targetId: action.targetId, goalId: action.goalId, question: action.question, status })) },
@@ -258,7 +259,7 @@ export async function runMain(request: MainRequest, models: Models, model: Model
           task.starts++;
           task.current = undefined;
           try {
-            const detection = await detectTask({ root, map, task: { ...task.action, taskId,
+            const detection = await detectTask({ root, repository, map, task: { ...task.action, taskId,
               evidence: task.action.evidence.flatMap(({ recordId }) => {
                 const record = records.get(recordId);
                 return record ? [{ recordId, citations: record.evidence }] : [];
@@ -292,7 +293,7 @@ export async function runMain(request: MainRequest, models: Models, model: Model
         if (!task?.current || !pendingValidations(task).includes(candidateIndex)) throw new Error('Select a pending candidate.');
         const attempt = task.current;
         return async (signal) => {
-          const result = await validateCandidate({ root, map, detection: attempt.detection, candidateIndex, context, signal },
+          const result = await validateCandidate({ root, repository, map, detection: attempt.detection, candidateIndex, context, signal },
             models, model);
           signal?.throwIfAborted();
           attempt.validations.push(result);
@@ -320,7 +321,8 @@ export async function runMain(request: MainRequest, models: Models, model: Model
     : hasPendingWork && !pending.remainingSubagentCalls ? 'budget_exhausted'
     : hasPendingWork ? 'work_remaining' : 'queue_drained';
   return {
-    status, summary: mainRun.draft?.summary ?? null, goal, goals, map: map ?? null, pending, subagentCalls,
+    status, summary: mainRun.draft?.summary ?? null, goal, goals, map: map ?? null,
+    indexSummary: (await repository.index).summary, pending, subagentCalls,
     repositoryReads, readJobs: [...readJobs.values()], plans, feedback: [...feedback.values()], failures,
     tasks: [...tasks.values()].map(({ current, ...task }) => ({ ...task, currentAttempt: current ? task.attempts.length : null })),
     coverage: [...tasks.values()].map(({ id, action, coverage: status }) =>

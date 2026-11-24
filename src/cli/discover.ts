@@ -8,7 +8,7 @@ const help = `Usage: npm run --silent discover -- --map <repository JSON> --stat
 Options:
   --map <file>                Repository CLI output or a raw map object.
   --state <file>              Goals and optional coverage, tasks, and feedback.
-  --repo <directory>         Enable source reading in the same repository as the map.
+  --repo <directory>         Enable source reading and index tools in the repository used for the map.
   --provider <name>           openai, anthropic, minimax, or minimax-cn. Default: openai.
   --out <file>                Write proposals as JSON to a new file. Default: stdout.
   --max-actions <number>      Maximum accepted proposals. Default: 10.

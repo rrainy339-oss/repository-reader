@@ -1,6 +1,8 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
 import { toolResult } from '../runtime/agent-runtime.ts';
+import { createIndexTools } from './index-tools.ts';
+import type { MapRecord } from './map.ts';
 import type { Repository, SourceLines } from './repository.ts';
 
 export const sourceRangeSchema = z.object({
@@ -31,7 +33,8 @@ export function createReadLinesTool(repository: Repository, onRead?: (source: So
   };
 }
 
-export function createRepositoryTools(repository: Repository, onRead: (source: SourceLines) => void): AgentTool[] {
+export function createRepositoryTools(repository: Repository, onRead?: (source: SourceLines) => void,
+  mapRecords?: () => Iterable<MapRecord>): AgentTool[] {
   const path = z.string().trim().min(1).max(1024);
   return [
     {
@@ -49,17 +52,21 @@ export function createRepositoryTools(repository: Repository, onRead: (source: S
     },
     {
       name: 'search_text', label: 'Search source',
-      description: 'Search for a literal, case-sensitive string. Narrow the scope if the result is truncated.',
+      description: 'Search for a literal, case-sensitive string. If truncated, pass nextCursor as cursor with the same query and scope, or narrow the scope.',
       parameters: { type: 'object', properties: {
         query: { type: 'string', minLength: 1, maxLength: 200 },
         scope: { type: 'string', description: 'Optional repository-relative file or directory.' },
+        cursor: { type: 'object', properties: { path: { type: 'string' },
+          line: { type: 'integer', minimum: 1 } }, required: ['path', 'line'], additionalProperties: false },
       }, required: ['query'], additionalProperties: false },
       async execute(_id, params, signal) {
-        const { query, scope } = z.object({ query: z.string().min(1).max(200), scope: path.optional() }).parse(params);
-        return toolResult(await repository.searchText(query, scope, 30, signal));
+        const { query, scope, cursor } = z.object({ query: z.string().min(1).max(200), scope: path.optional(),
+          cursor: z.strictObject({ path, line: z.number().int().positive() }).optional() }).parse(params);
+        return toolResult(await repository.searchText(query, scope, 30, signal, cursor));
       },
     },
     createReadLinesTool(repository, onRead),
+    ...createIndexTools(repository, onRead, mapRecords),
   ];
 }
 

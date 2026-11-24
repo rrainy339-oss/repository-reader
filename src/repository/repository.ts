@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import { lstat, open, readdir, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { buildRepositoryIndex, type IndexSource, type RepositoryIndex } from './repository-index.ts';
 
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_SEARCH_FILES = 800;
 const MAX_SEARCH_BYTES = 12 * 1024 * 1024;
+const INDEX_READ_BATCH = 16;
 const decoder = new TextDecoder('utf-8', { fatal: true });
 
 function excluded(name: string): boolean {
@@ -14,21 +16,42 @@ function excluded(name: string): boolean {
     || /\.(?:key|pem|p12|pfx)$/.test(lower);
 }
 
-function normalizePath(input: string): string {
+function validPathPart(part: string) {
+  return part && part !== '.' && part !== '..' && !/[:\\\x00-\x1f]/.test(part) && !excluded(part);
+}
+
+export function normalizePath(input: string): string {
   const path = input.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
   if (input === '.' || input === './') return '.';
-  if (!path || path.split('/').some((part) => !part || part === '.' || part === '..'
-    || /[:\x00-\x1f]/.test(part) || excluded(part))) {
+  if (!path.split('/').every(validPathPart)) {
     throw new Error('Use an in-scope, repository-relative path.');
   }
   return path;
 }
 
+const excludedDirectories = new Set(['.local-bench', 'dist', 'build', 'coverage', 'vendor', 'miniprogram_npm', '.next', '.nuxt']);
+
 function childPath(directory: string, name: string): string {
   return directory === '.' ? name : `${directory}/${name}`;
 }
 
-class UnsupportedFile extends Error {}
+class UnsupportedFile extends Error {
+  readonly size?: number;
+
+  constructor(message: string, size?: number) {
+    super(message);
+    this.size = size;
+  }
+}
+
+function unavailable(error: unknown) {
+  return error instanceof UnsupportedFile || (error instanceof Error
+    && ['EACCES', 'EPERM', 'ENOENT', 'ENOTDIR', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? ''));
+}
+
+function fingerprint(bytes: Buffer) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
 
 export type SourceLines = {
   path: string;
@@ -37,17 +60,28 @@ export type SourceLines = {
   sha256: string;
 };
 
+export type SearchCursor = { path: string; line: number };
+
 export class Repository {
   readonly root: string;
+  readonly index: Promise<RepositoryIndex>;
 
-  private constructor(root: string) {
+  private constructor(root: string, signal?: AbortSignal) {
     this.root = root;
+    this.index = buildRepositoryIndex(this.indexSources(signal), signal);
   }
 
-  static async open(directory: string): Promise<Repository> {
+  static async open(directory: string, shared?: Repository, signal?: AbortSignal): Promise<Repository> {
+    signal?.throwIfAborted();
     const root = await realpath(directory);
+    if (shared) {
+      if (root !== shared.root) throw new Error('The shared repository index belongs to a different directory.');
+      return shared;
+    }
     if (!(await stat(root)).isDirectory()) throw new Error('Repository path must be a directory.');
-    return new Repository(root);
+    const repository = new Repository(root, signal);
+    await repository.index;
+    return repository;
   }
 
   private async resolvePath(input: string) {
@@ -57,10 +91,14 @@ export class Repository {
     const fromRoot = relative(this.root, canonical);
     if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)
       || relative(absolute, canonical) !== '') {
-      throw new Error('Linked paths and paths outside the repository are excluded.');
+      throw new UnsupportedFile('Linked paths and paths outside the repository are excluded.');
     }
     const info = await lstat(absolute);
     if (!info.isDirectory() && !info.isFile()) throw new UnsupportedFile('Not a regular file or directory.');
+    const parts = path.toLowerCase().split('/');
+    if (parts.slice(0, info.isDirectory() ? parts.length : -1).some((part) => excludedDirectories.has(part))) {
+      throw new UnsupportedFile('Dependency and generated directories are excluded.');
+    }
     return { path, absolute: canonical, info };
   }
 
@@ -68,7 +106,8 @@ export class Repository {
     const { absolute, info } = await this.resolvePath(directory);
     if (!info.isDirectory()) throw new Error('Expected a directory.');
     const entries = await readdir(absolute, { withFileTypes: true });
-    return entries.filter((entry) => !excluded(entry.name) && (entry.isDirectory() || entry.isFile()))
+    return entries.filter((entry) => validPathPart(entry.name)
+      && (entry.isFile() || (entry.isDirectory() && !excludedDirectories.has(entry.name.toLowerCase()))))
       .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
   }
 
@@ -88,7 +127,7 @@ export class Repository {
   private async readText(input: string) {
     const { path, absolute, info } = await this.resolvePath(input);
     if (!info.isFile() || info.size > MAX_FILE_BYTES) {
-      throw new UnsupportedFile('Only regular text files up to 512 KiB are supported.');
+      throw new UnsupportedFile('Only regular text files up to 512 KiB are supported.', info.size);
     }
     const file = await open(absolute, 'r');
     try {
@@ -99,14 +138,14 @@ export class Repository {
         if (bytesRead === 0) break;
         offset += bytesRead;
       }
-      if (offset !== info.size) throw new UnsupportedFile('File size changed while reading.');
+      if (offset !== info.size) throw new UnsupportedFile('File size changed while reading.', info.size);
       const bytes = buffer.subarray(0, offset);
-      if (bytes.includes(0)) throw new UnsupportedFile('Binary file.');
+      if (bytes.includes(0)) throw new UnsupportedFile('Binary file.', info.size);
       let text: string;
       try {
         text = decoder.decode(bytes);
       } catch {
-        throw new UnsupportedFile('File is not UTF-8 text.');
+        throw new UnsupportedFile('File is not UTF-8 text.', info.size);
       }
       const lines = text ? text.split(/\r\n|\n|\r/) : [];
       if (lines.at(-1) === '') lines.pop();
@@ -118,7 +157,8 @@ export class Repository {
 
   async readLines(path: string, startLine: number, endLine: number) {
     const source = await this.readText(path);
-    if (startLine > source.lines.length || endLine < startLine) {
+    if (!Number.isSafeInteger(startLine) || !Number.isSafeInteger(endLine)
+      || startLine < 1 || startLine > source.lines.length || endLine < startLine) {
       throw new Error(`Invalid line range. The file has ${source.lines.length} lines.`);
     }
     const lastLine = Math.min(endLine, startLine + 79, source.lines.length);
@@ -135,7 +175,7 @@ export class Repository {
       startLine,
       endLine: lines.at(-1)!.line,
       totalLines: source.lines.length,
-      sha256: createHash('sha256').update(source.bytes).digest('hex'),
+      sha256: fingerprint(source.bytes),
       lines,
     };
   }
@@ -144,50 +184,98 @@ export class Repository {
     try {
       const file = await this.readText(source.path);
       return source.startLine <= source.endLine && source.endLine <= file.lines.length
-        && createHash('sha256').update(file.bytes).digest('hex') === source.sha256;
+        && fingerprint(file.bytes) === source.sha256;
     } catch {
       return false;
     }
   }
 
-  private async *files(path: string): AsyncGenerator<string> {
-    for (const entry of await this.entries(path)) {
+  private async *files(path: string, signal?: AbortSignal, isRoot = true): AsyncGenerator<string> {
+    signal?.throwIfAborted();
+    let entries;
+    try {
+      entries = await this.entries(path);
+    } catch (error) {
+      if (isRoot || !unavailable(error)) throw error;
+      return;
+    }
+    for (const entry of entries) {
+      signal?.throwIfAborted();
       const child = childPath(path, entry.name);
-      if (entry.isDirectory()) yield* this.files(child);
+      if (entry.isDirectory()) yield* this.files(child, signal, false);
       else yield child;
     }
   }
 
-  async searchText(query: string, scope = '.', limit = 30, signal?: AbortSignal) {
+  private async *indexSources(signal?: AbortSignal): AsyncGenerator<IndexSource> {
+    let batch: string[] = [];
+    for await (const path of this.files('.', signal)) {
+      batch.push(path);
+      if (batch.length === INDEX_READ_BATCH) {
+        yield* await Promise.all(batch.map((file) => this.indexSource(file)));
+        batch = [];
+      }
+    }
+    yield* await Promise.all(batch.map((file) => this.indexSource(file)));
+  }
+
+  private async indexSource(path: string): Promise<IndexSource> {
+    try {
+      const { bytes, lines } = await this.readText(path);
+      return { path, size: bytes.length, contentHash: fingerprint(bytes), text: lines.join('\n') };
+    } catch (error) {
+      if (!unavailable(error)) throw error;
+      return { path, size: error instanceof UnsupportedFile ? error.size ?? null : null, contentHash: null };
+    }
+  }
+
+  async searchText(query: string, scope = '.', limit = 30, signal?: AbortSignal, cursor?: SearchCursor) {
+    if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('Search result limit must be a positive integer.');
     const { path, info } = await this.resolvePath(scope);
-    const paths = info.isDirectory() ? this.files(path) : [path];
+    const paths = info.isDirectory() ? this.files(path, signal) : [path];
+    const resumeAt = cursor ? normalizePath(cursor.path) : undefined;
+    const cursorInScope = !resumeAt || path === '.' || resumeAt === path
+      || (info.isDirectory() && resumeAt.startsWith(path + '/'));
+    if (!cursorInScope || (cursor && (!Number.isSafeInteger(cursor.line) || cursor.line < 1))) {
+      throw new Error('Use a valid search cursor within the current scope.');
+    }
+    let reachedCursor = resumeAt === undefined;
     const matches: { path: string; line: number; text: string }[] = [];
     let examinedFiles = 0;
     let skippedFiles = 0;
     let bytesRead = 0;
     for await (const file of paths) {
       signal?.throwIfAborted();
+      if (!reachedCursor) {
+        if (file !== resumeAt) continue;
+        reachedCursor = true;
+      }
       if (examinedFiles >= MAX_SEARCH_FILES || bytesRead >= MAX_SEARCH_BYTES) {
-        return { matches, examinedFiles, skippedFiles, truncated: true };
+        return { matches, examinedFiles, skippedFiles, truncated: true,
+          limitReason: 'scan_budget', nextCursor: { path: file, line: 1 } };
       }
       examinedFiles++;
       let source;
       try {
         source = await this.readText(file);
       } catch (error) {
-        if (!(error instanceof UnsupportedFile)) throw error;
+        if (!unavailable(error)) throw error;
         skippedFiles++;
         continue;
       }
       bytesRead += source.bytes.length;
-      for (const [index, text] of source.lines.entries()) {
+      const first = file === resumeAt ? cursor!.line - 1 : 0;
+      for (let index = first; index < source.lines.length; index++) {
+        const text = source.lines[index];
         const at = text.indexOf(query);
         if (at < 0) continue;
         const start = Math.max(0, at - 100);
-        if (matches.length === limit) return { matches, examinedFiles, skippedFiles, truncated: true };
+        if (matches.length === limit) return { matches, examinedFiles, skippedFiles, truncated: true,
+          limitReason: 'match_limit', nextCursor: { path: source.path, line: index + 1 } };
         matches.push({ path: source.path, line: index + 1, text: text.slice(start, start + 400) });
       }
     }
-    return { matches, examinedFiles, skippedFiles, truncated: false };
+    if (!reachedCursor) throw new Error('The search cursor is outside the current scope or its file disappeared. Restart without it.');
+    return { matches, examinedFiles, skippedFiles, truncated: false, nextCursor: null };
   }
 }
