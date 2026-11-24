@@ -35,13 +35,19 @@ function navigation(repository: Repository, observed: SourceLines[] = []) {
 
 test('indexes readable files, records unsupported and failed sources, and keeps exclusions in force', async (t) => {
   const { root, temporary, write } = await fixture(t);
+  const previousLimit = process.env.REPO_READER_MAX_FILE_BYTES;
+  process.env.REPO_READER_MAX_FILE_BYTES = String(1024 * 1024);
+  t.after(() => {
+    if (previousLimit === undefined) delete process.env.REPO_READER_MAX_FILE_BYTES;
+    else process.env.REPO_READER_MAX_FILE_BYTES = previousLimit;
+  });
   const healthy = 'function healthy() { return 1; }\n';
   await Promise.all([
     write('src/good.js', healthy),
     write('src/broken.js', 'function broken( {'),
     write('src/other.py', 'def other():\n    pass\n'),
     write('media/binary.dat', Buffer.from([1, 0, 2])),
-    write('media/large.txt', Buffer.alloc(512 * 1024 + 1, 65)),
+    write('media/large.txt', Buffer.alloc(1024 * 1024 + 1, 65)),
     write('node_modules/example/index.js', healthy),
     write('dist/generated.js', healthy),
     write('vendor/library/index.js', healthy),
@@ -208,16 +214,18 @@ test('symbol tools page definition matches and register only current, actually r
   const listed = await call('get_file_symbols', { filePath: 'cloudfunctions/order/index.js' });
   const { id } = listed.items[0];
   assert.equal(id, scoped.items[1].id);
-  const result = await call('get_symbol_code', { symbolId: id });
+  const result = await call('get_symbol_code', { symbolId: id, maxBytes: 1024 });
   assert.equal(result.lines[0].text, 'function updateOrder() {');
-  assert.equal(result.source.endLine, 80);
+  assert.ok(result.source.endLine < 92);
   assert.equal(result.truncated, true);
-  assert.equal(result.nextStartLine, 81);
+  assert.equal(result.nextStartLine, result.source.endLine + 1);
   assert.deepEqual(await verifyReadRange(repository, observed, result.source), result.source);
-  assert.equal(await verifyReadRange(repository, observed, { ...result.source, endLine: 81 }), undefined);
-  const tail = await call('get_symbol_code', { symbolId: id, startLine: result.nextStartLine });
-  assert.equal(tail.source.endLine, 92);
-  assert.equal(tail.nextStartLine, null);
+  assert.equal(await verifyReadRange(repository, observed, { ...result.source, endLine: result.nextStartLine }), undefined);
+  const complete = await call('get_symbol_code', { symbolId: id });
+  assert.equal(complete.source.endLine, 92);
+  assert.equal(complete.lines.length, 92);
+  assert.equal(complete.truncated, false);
+  assert.equal(complete.nextCursor, null);
   await assert.rejects(call('get_symbol_code', { symbolId: 'unknown' }), /Unknown symbol ID/);
 
   await write('cloudfunctions/order/index.js', 'function updateOrder() { return 9; }');
@@ -228,7 +236,7 @@ test('symbol tools page definition matches and register only current, actually r
   assert.match(current.lines[0].text, /return 9/);
 });
 
-test('full-text search resumes across a match limit and the directory scan budget', async (t) => {
+test('full-text search pages matches and searches beyond the former 800-file ceiling', async (t) => {
   const { root, write } = await fixture(t);
   await write('matches.txt', 'hit\n'.repeat(35));
   for (let base = 0; base <= 800; base += 50) {
@@ -244,10 +252,55 @@ test('full-text search resumes across a match limit and the directory scan budge
   const next = await call('search_text', { query: 'hit', scope: 'matches.txt', cursor: page.nextCursor });
   assert.deepEqual(next.matches.map(({ line }: { line: number }) => line), [31, 32, 33, 34, 35]);
   assert.equal(next.truncated, false);
-  const budget = await call('search_text', { query: 'last', scope: 'bulk' });
-  assert.equal(budget.limitReason, 'scan_budget');
-  assert.deepEqual(budget.nextCursor, { path: 'bulk/0800.txt', line: 1 });
-  const resumed = await call('search_text', { query: 'last', scope: 'bulk', cursor: budget.nextCursor });
-  assert.deepEqual(resumed.matches, [{ path: 'bulk/0800.txt', line: 1, text: 'last match' }]);
-  assert.equal(resumed.truncated, false);
+  const result = await call('search_text', { query: 'last', scope: 'bulk' });
+  assert.deepEqual(result.matches, [{ path: 'bulk/0800.txt', line: 1, text: 'last match' }]);
+  assert.equal(result.examinedFiles, 801);
+  assert.equal(result.truncated, false);
+});
+
+test('long lines remain intact and explicit fragments never become whole-line evidence', async (t) => {
+  const { root, write } = await fixture(t);
+  const long = 'a'.repeat(1600) + '🧪' + 'b'.repeat(1400);
+  await write('long.txt', long + '\nshort\n');
+  await write('previously-too-large.txt', Buffer.alloc(600 * 1024, 65));
+  const repository = await Repository.open(root);
+  assert.equal((await repository.index).files.get('previously-too-large.txt')?.parseStatus, 'unsupported');
+  const observed: SourceLines[] = [];
+  const call = navigation(repository, observed);
+  const first = await call('read_lines', { path: 'long.txt', startLine: 1, endLine: 2, maxBytes: 700 });
+  assert.equal(first.evidence, null);
+  assert.equal(first.truncated, true);
+  assert.equal(first.nextCursor.line, 1);
+  assert.equal(observed.length, 0);
+  const fragments = [first.lines[0].text];
+  let cursor = first.nextCursor;
+  while (cursor?.line === 1) {
+    const next = await call('read_lines', { path: 'long.txt', startLine: cursor.line, startColumn: cursor.column, endLine: 2, maxBytes: 700 });
+    assert.equal(next.evidence, null);
+    fragments.push(next.lines[0].text);
+    cursor = next.nextCursor;
+  }
+  assert.equal(fragments.join(''), long);
+  assert.equal(observed.length, 0);
+  const full = await call('read_lines', { path: 'long.txt', startLine: 1, endLine: 2 });
+  assert.equal(full.lines[0].text, long);
+  assert.deepEqual(await verifyReadRange(repository, observed, full.evidence), full.evidence);
+});
+
+test('the optional byte scan page resumes without losing later files', async (t) => {
+  const { root, write } = await fixture(t);
+  const previous = process.env.REPO_READER_SEARCH_PAGE_BYTES;
+  process.env.REPO_READER_SEARCH_PAGE_BYTES = '8';
+  t.after(() => {
+    if (previous === undefined) delete process.env.REPO_READER_SEARCH_PAGE_BYTES;
+    else process.env.REPO_READER_SEARCH_PAGE_BYTES = previous;
+  });
+  await Promise.all([write('a.txt', 'earlier file\n'), write('b.txt', 'target\n')]);
+  const call = navigation(await Repository.open(root));
+  const first = await call('search_text', { query: 'target' });
+  assert.equal(first.limitReason, 'scan_budget');
+  assert.deepEqual(first.nextCursor, { path: 'b.txt', line: 1 });
+  const second = await call('search_text', { query: 'target', cursor: first.nextCursor });
+  assert.deepEqual(second.matches, [{ path: 'b.txt', line: 1, text: 'target' }]);
+  assert.equal(second.truncated, false);
 });

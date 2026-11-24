@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 const savedCitation = z.object({
-  path: z.string().trim().min(1).max(1024),
+  path: z.string().trim().min(1),
   startLine: z.number().int().positive(),
   endLine: z.number().int().positive(),
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
@@ -10,21 +10,21 @@ const savedCitation = z.object({
 
 export const mapRecordSchema = z.object({
   kind: z.enum(['module', 'entry', 'relationship', 'file']),
-  subject: z.string().trim().min(1).max(180),
-  description: z.string().trim().min(1).max(600),
+  subject: z.string().trim().min(1),
+  description: z.string().trim().min(1),
   basis: z.enum(['observed', 'inferred']),
   anchor: z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('file'), path: z.string().trim().min(1).max(1024) }),
-    z.object({ kind: z.enum(['symbol', 'entry']), id: z.string().trim().min(1).max(80) }),
+    z.object({ kind: z.literal('file'), path: z.string().trim().min(1) }),
+    z.object({ kind: z.enum(['symbol', 'entry']), id: z.string().trim().min(1) }),
   ]).optional(),
 });
 
 export const mapSchema = z.object({
   version: z.literal(1),
   root: z.string().min(1),
-  summary: z.string().trim().min(1).max(3000).optional(),
-  unresolved: z.array(z.string().trim().min(1).max(600)).max(20).optional(),
-  records: z.array(mapRecordSchema.extend({ evidence: z.array(savedCitation).min(1).max(5) })),
+  summary: z.string().trim().min(1).optional(),
+  unresolved: z.array(z.string().trim().min(1)).optional(),
+  records: z.array(mapRecordSchema.extend({ evidence: z.array(savedCitation).min(1) })),
 });
 
 export type RepositoryMap = z.infer<typeof mapSchema>;

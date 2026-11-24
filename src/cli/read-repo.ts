@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import { readRepository } from '../agents/reader.ts';
 import { mapSchema } from '../repository/map.ts';
-import { getRuntime, loadJson, reportCliError, saveJson } from './common.ts';
+import { budgetFlags, budgetFromFlags, budgetHelp, getRuntime, loadJson, reportCliError, saveJson } from './common.ts';
 
 const help = `Usage: npm run --silent read-repo -- --repo <directory> --goal <reading goal> --model <id>
 
@@ -11,8 +11,11 @@ Options:
   --out <file>                Save JSON as UTF-8 to a new file instead of stdout.
   --provider <name>           openai, anthropic, minimax, or minimax-cn. Default: openai.
   --max-tool-calls <number>    Tool calls allowed. Default: 30.
-  --timeout-ms <number>        Agent timeout in milliseconds. Default: 120000.
+  --max-tool-calls <number>   Optional local tool-call ceiling.
+  --timeout-ms <number>        Whole-run timeout. Default: 600000; 0 disables it.
   --help                      Show this help.
+
+${budgetHelp}
 
 Provider and model can also be set with REPO_READER_PROVIDER and REPO_READER_MODEL.
 The chosen model provider receives relevant source excerpts.`;
@@ -24,6 +27,7 @@ async function loadMap(path: string) {
 
 async function main() {
   const { values } = parseArgs({ options: {
+    ...budgetFlags,
     repo: { type: 'string' }, goal: { type: 'string' }, model: { type: 'string' },
     provider: { type: 'string' }, focus: { type: 'string', multiple: true },
     map: { type: 'string' }, out: { type: 'string' }, 'max-tool-calls': { type: 'string' }, 'timeout-ms': { type: 'string' },
@@ -45,6 +49,7 @@ async function main() {
     focus: values.focus,
     previousMap: values.map ? await loadMap(values.map) : undefined,
     maxToolCalls: values['max-tool-calls'] === undefined ? undefined : Number(values['max-tool-calls']),
+    budget: budgetFromFlags(values),
     timeoutMs: values['timeout-ms'] === undefined ? undefined : Number(values['timeout-ms']),
   }, models, model);
   await saveJson(result, values.out);

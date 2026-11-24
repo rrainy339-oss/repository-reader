@@ -1,11 +1,10 @@
 import { createHash } from 'node:crypto';
+import { constants as bufferLimits } from 'node:buffer';
 import { lstat, open, readdir, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { searchPageByteLimit, sourceFileByteLimit } from '../runtime/budget.ts';
 import { buildRepositoryIndex, type IndexSource, type RepositoryIndex } from './repository-index.ts';
 
-const MAX_FILE_BYTES = 512 * 1024;
-const MAX_SEARCH_FILES = 800;
-const MAX_SEARCH_BYTES = 12 * 1024 * 1024;
 const INDEX_READ_BATCH = 16;
 const decoder = new TextDecoder('utf-8', { fatal: true });
 
@@ -65,6 +64,8 @@ export type SearchCursor = { path: string; line: number };
 export class Repository {
   readonly root: string;
   readonly index: Promise<RepositoryIndex>;
+  private readonly maxFileBytes = sourceFileByteLimit();
+  private readonly maxSearchPageBytes = searchPageByteLimit();
 
   private constructor(root: string, signal?: AbortSignal) {
     this.root = root;
@@ -124,16 +125,20 @@ export class Repository {
     };
   }
 
-  private async readText(input: string) {
+  private async readText(input: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const { path, absolute, info } = await this.resolvePath(input);
-    if (!info.isFile() || info.size > MAX_FILE_BYTES) {
-      throw new UnsupportedFile('Only regular text files up to 512 KiB are supported.', info.size);
+    if (!info.isFile()) throw new UnsupportedFile('Only regular text files are supported.', info.size);
+    if (this.maxFileBytes && info.size > this.maxFileBytes) {
+      throw new UnsupportedFile('The file exceeds REPO_READER_MAX_FILE_BYTES (' + this.maxFileBytes + ' bytes).', info.size);
     }
+    if (info.size >= bufferLimits.MAX_LENGTH) throw new UnsupportedFile('The file exceeds Node.js buffer capacity.', info.size);
     const file = await open(absolute, 'r');
     try {
-      const buffer = Buffer.alloc(Math.min(info.size + 1, MAX_FILE_BYTES + 1));
+      const buffer = Buffer.alloc(info.size + 1);
       let offset = 0;
       while (offset < buffer.length) {
+        signal?.throwIfAborted();
         const { bytesRead } = await file.read(buffer, offset, buffer.length - offset, offset);
         if (bytesRead === 0) break;
         offset += bytesRead;
@@ -155,25 +160,18 @@ export class Repository {
     }
   }
 
-  async readLines(path: string, startLine: number, endLine: number) {
-    const source = await this.readText(path);
+  async readLines(path: string, startLine: number, endLine: number, signal?: AbortSignal) {
+    const source = await this.readText(path, signal);
     if (!Number.isSafeInteger(startLine) || !Number.isSafeInteger(endLine)
       || startLine < 1 || startLine > source.lines.length || endLine < startLine) {
       throw new Error(`Invalid line range. The file has ${source.lines.length} lines.`);
     }
-    const lastLine = Math.min(endLine, startLine + 79, source.lines.length);
-    const lines: { line: number; text: string; truncated?: boolean }[] = [];
-    let characters = 0;
-    for (let line = startLine; line <= lastLine && characters < 10_000; line++) {
-      const text = source.lines[line - 1];
-      const cap = Math.min(800, 10_000 - characters);
-      lines.push({ line, text: text.slice(0, cap), ...(text.length > cap ? { truncated: true } : {}) });
-      characters += Math.min(text.length, cap);
-    }
+    const lastLine = Math.min(endLine, source.lines.length);
+    const lines = source.lines.slice(startLine - 1, lastLine).map((text, index) => ({ line: startLine + index, text }));
     return {
       path: source.path,
       startLine,
-      endLine: lines.at(-1)!.line,
+      endLine: lastLine,
       totalLines: source.lines.length,
       sha256: fingerprint(source.bytes),
       lines,
@@ -212,16 +210,16 @@ export class Repository {
     for await (const path of this.files('.', signal)) {
       batch.push(path);
       if (batch.length === INDEX_READ_BATCH) {
-        yield* await Promise.all(batch.map((file) => this.indexSource(file)));
+        yield* await Promise.all(batch.map((file) => this.indexSource(file, signal)));
         batch = [];
       }
     }
-    yield* await Promise.all(batch.map((file) => this.indexSource(file)));
+    yield* await Promise.all(batch.map((file) => this.indexSource(file, signal)));
   }
 
-  private async indexSource(path: string): Promise<IndexSource> {
+  private async indexSource(path: string, signal?: AbortSignal): Promise<IndexSource> {
     try {
-      const { bytes, lines } = await this.readText(path);
+      const { bytes, lines } = await this.readText(path, signal);
       return { path, size: bytes.length, contentHash: fingerprint(bytes), text: lines.join('\n') };
     } catch (error) {
       if (!unavailable(error)) throw error;
@@ -240,7 +238,8 @@ export class Repository {
       throw new Error('Use a valid search cursor within the current scope.');
     }
     let reachedCursor = resumeAt === undefined;
-    const matches: { path: string; line: number; text: string }[] = [];
+    const matches: { path: string; line: number; text: string; matchColumn?: number;
+      excerptStartColumn?: number; truncated?: boolean }[] = [];
     let examinedFiles = 0;
     let skippedFiles = 0;
     let bytesRead = 0;
@@ -250,14 +249,14 @@ export class Repository {
         if (file !== resumeAt) continue;
         reachedCursor = true;
       }
-      if (examinedFiles >= MAX_SEARCH_FILES || bytesRead >= MAX_SEARCH_BYTES) {
+      if (this.maxSearchPageBytes && bytesRead >= this.maxSearchPageBytes) {
         return { matches, examinedFiles, skippedFiles, truncated: true,
           limitReason: 'scan_budget', nextCursor: { path: file, line: 1 } };
       }
       examinedFiles++;
       let source;
       try {
-        source = await this.readText(file);
+        source = await this.readText(file, signal);
       } catch (error) {
         if (!unavailable(error)) throw error;
         skippedFiles++;
@@ -272,7 +271,9 @@ export class Repository {
         const start = Math.max(0, at - 100);
         if (matches.length === limit) return { matches, examinedFiles, skippedFiles, truncated: true,
           limitReason: 'match_limit', nextCursor: { path: source.path, line: index + 1 } };
-        matches.push({ path: source.path, line: index + 1, text: text.slice(start, start + 400) });
+        const excerpt = text.slice(start, start + 400);
+        matches.push({ path: source.path, line: index + 1, text: excerpt,
+          ...(start || excerpt.length < text.length ? { matchColumn: at + 1, excerptStartColumn: start + 1, truncated: true } : {}) });
       }
     }
     if (!reachedCursor) throw new Error('The search cursor is outside the current scope or its file disappeared. Restart without it.');

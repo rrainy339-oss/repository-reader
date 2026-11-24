@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import { validateCandidate, validationContextSchema, validationInputSchema } from '../agents/validator.ts';
 import { mapSchema } from '../repository/map.ts';
-import { getRuntime, loadJson, reportCliError, saveJson } from './common.ts';
+import { budgetFlags, budgetFromFlags, budgetHelp, getRuntime, loadJson, reportCliError, saveJson } from './common.ts';
 
 const help = `Usage: npm run --silent validate -- --repo <directory> --detection <result.json> --model <id>
 
@@ -13,15 +13,18 @@ Options:
   --context <file>            Optional validation rules and provenance.
   --provider <name>           openai, anthropic, minimax, or minimax-cn. Default: openai.
   --out <file>                Write the decision to a new UTF-8 file. Default: stdout.
-  --max-tool-calls <number>    Tool call budget. Default: 15.
-  --timeout-ms <number>       Review timeout. Default: 120000.
+  --max-tool-calls <number>    Optional local tool-call ceiling.
+  --timeout-ms <number>       Whole-run timeout. Default: 600000; 0 disables it.
   --help                      Show this help.
+
+${budgetHelp}
 
 Provider and model can also be set with REPO_READER_PROVIDER and REPO_READER_MODEL.
 Candidate context and relevant source excerpts are sent to the selected model provider.`;
 
 async function main() {
   const { values } = parseArgs({ options: {
+    ...budgetFlags,
     repo: { type: 'string' }, detection: { type: 'string' }, 'candidate-index': { type: 'string' }, map: { type: 'string' },
     context: { type: 'string' }, provider: { type: 'string' }, model: { type: 'string' }, out: { type: 'string' },
     'max-tool-calls': { type: 'string' }, 'timeout-ms': { type: 'string' }, help: { type: 'boolean' },
@@ -43,6 +46,7 @@ async function main() {
     context: contextJson === undefined ? undefined : validationContextSchema.parse(contextJson),
     candidateIndex: values['candidate-index'] === undefined ? undefined : Number(values['candidate-index']),
     maxToolCalls: values['max-tool-calls'] === undefined ? undefined : Number(values['max-tool-calls']),
+    budget: budgetFromFlags(values),
     timeoutMs: values['timeout-ms'] === undefined ? undefined : Number(values['timeout-ms']),
   }, models, model);
   await saveJson(result, values.out);

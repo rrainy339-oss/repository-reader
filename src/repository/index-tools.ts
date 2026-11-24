@@ -7,12 +7,14 @@ import type { MapRecord } from './map.ts';
 import type { RepositoryIndex } from './repository-index.ts';
 import { normalizePath, type Repository, type SourceLines } from './repository.ts';
 import { symbolKinds } from './source-symbols.ts';
+import { sourcePage } from './source-page.ts';
 
-const pathInput = z.string().trim().min(1).max(1024);
+const pathInput = z.string().min(1);
 const selector = {
   scope: pathInput.optional().describe('Repository-relative file or directory.'),
   filePattern: pathInput.optional().describe('Repository-relative glob, such as cloudfunctions/**/*.js.'),
   offset: z.number().int().nonnegative().default(0),
+  limit: z.number().int().positive().optional(),
 };
 
 function fileFilter({ scope, filePattern }: { scope?: string; filePattern?: string }) {
@@ -22,16 +24,16 @@ function fileFilter({ scope, filePattern }: { scope?: string; filePattern?: stri
     && (pattern === undefined || posix.matchesGlob(path, pattern));
 }
 
-function page<T>(items: readonly T[], offset: number) {
-  const next = offset + 20;
+function page<T>(items: readonly T[], offset: number, limit = 20) {
+  const next = offset + limit;
   return { items: items.slice(offset, next), total: items.length, nextOffset: next < items.length ? next : null };
 }
 
 function tool<T extends z.ZodObject>(name: string, label: string, description: string, schema: T,
-  execute: (input: z.output<T>) => Promise<object>): AgentTool {
+  execute: (input: z.output<T>, signal?: AbortSignal) => Promise<object>): AgentTool {
   return {
     name, label, description, parameters: z.toJSONSchema(schema, { io: 'input' }),
-    async execute(_id, params) { return toolResult(await execute(schema.parse(params))); },
+    async execute(_id, params, signal) { return toolResult(await execute(schema.parse(params), signal)); },
   };
 }
 
@@ -51,7 +53,7 @@ function summarizedEntries(index: RepositoryIndex, records: Iterable<MapRecord>)
 }
 
 export function createIndexTools(repository: Repository, onRead?: (source: SourceLines) => void,
-  mapRecords: () => Iterable<MapRecord> = () => []) {
+  mapRecords: () => Iterable<MapRecord> = () => [], pageBytes?: number) {
   return [
     tool('query_files', 'Query file index',
       'List indexed files and parse statuses. Use nextOffset to continue; unsupported and failed text can still be read.',
@@ -60,11 +62,11 @@ export function createIndexTools(repository: Repository, onRead?: (source: Sourc
         const index = await repository.index;
         const matchesFile = fileFilter(input);
         return page([...index.files.values()].filter(({ path, parseStatus }) =>
-          matchesFile(path) && (!input.parseStatus || input.parseStatus === parseStatus)), input.offset);
+          matchesFile(path) && (!input.parseStatus || input.parseStatus === parseStatus)), input.offset, input.limit);
       }),
     tool('query_entries', 'Query entry index',
       'List static server, client, and external-call candidates. Filter by analysisStatus to find unread entries. Use nextOffset to continue.',
-      z.strictObject({ ...selector, entryId: z.string().trim().min(1).max(80).optional(),
+      z.strictObject({ ...selector, entryId: z.string().trim().min(1).optional(),
         kind: z.enum(entryKinds).optional(), analysisStatus: z.enum(analysisStatuses).optional() }),
       async (input) => {
         const index = await repository.index;
@@ -76,34 +78,35 @@ export function createIndexTools(repository: Repository, onRead?: (source: Sourc
           .map((entry) => ({ ...entry, analysisStatus: summarized.has(entry.id) ? 'summarized'
             : index.hasEntryRead(entry.id) ? 'partial' : entry.analysisStatus }))
           .filter((entry) => !input.analysisStatus || entry.analysisStatus === input.analysisStatus);
-        return page(entries, input.offset);
+        return page(entries, input.offset, input.limit);
       }),
     tool('get_file_symbols', 'List file symbols',
       'List definition locations in one file. Use nextOffset to continue. Read code for evidence.',
-      z.strictObject({ filePath: pathInput, offset: selector.offset }),
-      async ({ filePath, offset }) => {
+      z.strictObject({ filePath: pathInput, offset: selector.offset, limit: selector.limit }),
+      async ({ filePath, offset, limit }) => {
         const index = await repository.index;
         const path = normalizePath(filePath);
         const file = index.files.get(path);
         if (!file) throw new Error('The file is not in the repository index: ' + path);
-        return { file, ...page(index.symbolsByFile.get(path) ?? [], offset) };
+        return { file, ...page(index.symbolsByFile.get(path) ?? [], offset, limit) };
       }),
     tool('search_symbols', 'Search symbol definitions',
       'Find definitions by short or qualified name. Fuzzy mode ranks exact names first. Results are locations, with no call-target resolution. Use nextOffset to continue.',
-      z.strictObject({ ...selector, name: z.string().trim().min(1).max(240),
+      z.strictObject({ ...selector, name: z.string().trim().min(1),
         match: z.enum(['exact', 'fuzzy']).default('fuzzy'), kind: z.enum(symbolKinds).optional() }),
       async (input) => {
         const index = await repository.index;
         const matchesFile = fileFilter(input);
         const symbols = index.searchSymbols(input.name, input.match)
           .filter((symbol) => matchesFile(symbol.filePath) && (!input.kind || symbol.kind === input.kind));
-        return page(symbols, input.offset);
+        return page(symbols, input.offset, input.limit);
       }),
     tool('get_symbol_code', 'Read symbol code',
-      'Read current source for an indexed definition, with the same bounds and evidence as read_lines. Optional line numbers are absolute and inclusive. Use nextStartLine to continue.',
-      z.strictObject({ symbolId: z.string().trim().min(1).max(80), startLine: z.number().int().positive().optional(),
-        endLine: z.number().int().positive().optional() }),
-      async ({ symbolId, startLine, endLine }) => {
+      'Read the full indexed definition by default. With a nextCursor, use line/column as startLine/startColumn and keep the same endLine. Only complete lines are evidence.',
+      z.strictObject({ symbolId: z.string().trim().min(1), startLine: z.number().int().positive().optional(),
+        endLine: z.number().int().positive().optional(), startColumn: z.number().int().positive().optional(),
+        maxBytes: z.number().int().min(256).optional() }),
+      async ({ symbolId, startLine, endLine, startColumn, maxBytes }, signal) => {
         const index = await repository.index;
         const symbol = index.symbols.get(symbolId);
         if (!symbol) throw new Error('Unknown symbol ID: ' + symbolId);
@@ -114,18 +117,17 @@ export function createIndexTools(repository: Repository, onRead?: (source: Sourc
         }
         let result;
         try {
-          result = await repository.readLines(symbol.filePath, first, last);
+          result = await repository.readLines(symbol.filePath, first, last, signal);
         } catch (cause) {
           throw new Error('The indexed source is unavailable. Use read_lines to inspect current source or reopen the repository.', { cause });
         }
-        const { lines, totalLines, ...source } = result;
-        if (source.sha256 !== index.files.get(symbol.filePath)?.contentHash) {
+        if (result.sha256 !== index.files.get(symbol.filePath)?.contentHash) {
           throw new Error('The indexed source has changed. Use read_lines or reopen the repository to refresh the index.');
         }
-        onRead?.(source);
-        return { symbol, source, lines, totalLines,
-          truncated: source.startLine > symbol.startLine || source.endLine < symbol.endLine || lines.some((line) => line.truncated),
-          nextStartLine: source.endLine < symbol.endLine ? source.endLine + 1 : null };
+        const limit = maxBytes === undefined ? pageBytes : Math.min(maxBytes, pageBytes ?? Infinity);
+        const { evidence: source, sha256: _hash, ...page } = sourcePage(result, limit, startColumn);
+        if (source) onRead?.(source);
+        return { symbol, source, ...page, nextStartLine: page.nextCursor?.column === 1 ? page.nextCursor.line : null };
       }),
   ];
 }
