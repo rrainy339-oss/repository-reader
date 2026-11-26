@@ -14,6 +14,12 @@ ESM 具名或默认导入与 CommonJS 的 `module.exports` 是不同绑定方式
 
 查清 `await`、返回 Promise、回调登记和错误分支与持久化操作的顺序。已等待且在拒绝路径终止的校验，与只创建 Promise 或仅日志记录的分支有不同语义。静态上看到校验函数要继续阅读实现，测试使用的替身或编译路径也要区分。代码片段 `const input = schema.parse(raw)` 只有 parse 在当前路径执行且后续使用 input 时才建立运行时解析证据。
 
+## 缩窄对象和控制的实际语义
+
+对安全字段记录运行时的最终来源。`??` 仅在 null 或 undefined 时使用回退，`||` 会对其他 falsy 值回退。若布尔值或零有业务语义，读默认值和实际分支。`in` 可命中继承属性，`Object.hasOwn` 只检查自有属性。对象扩展以可枚举的自有属性构造对象，随后对结果的普通属性读取仍有继承语义。动态字典转换为普通对象后，应重新确认键和值的保障。
+
+例如，`req.body as Update` 只是让编译器接受类型。控制器实际消费 `schema.parse(req.body)` 的输出并显式选择可改字段时，可以用这两处源码证明运行时约束。若 Promise 回调创建后未返回给外层，查看验证与副作用有没有可靠时序。以当前入口的装配和绑定作为判断依据，测试替身可用于识别需核实的路径。
+
 ## References
 
 - [Tencent SecGuide · JavaScript 安全指南](https://github.com/Tencent/secguide/blob/bfda087142e3bb3f5840cbc6af82c1982d1d14e4/JavaScript%E5%AE%89%E5%85%A8%E6%8C%87%E5%8D%97.md)

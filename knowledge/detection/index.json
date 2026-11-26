@@ -12,6 +12,7 @@
       "call-sites"
     ],
     "cwes": [],
+    "aliases": ["源码导航", "调用链", "导入绑定", "间接调用", "module resolution", "call graph", "re-export"],
     "path": "methodology/source-navigation.md",
     "useWhen": "入口只有地图记录、存在同名定义、跨文件目标不明时。"
   },
@@ -28,6 +29,7 @@
       "trust-boundaries"
     ],
     "cwes": [],
+    "aliases": ["正向追踪", "反向追踪", "数据流", "控制流", "异常路径", "dataflow", "taint tracking", "dominance"],
     "path": "methodology/flow-and-control.md",
     "useWhen": "需要确认某个控制是否覆盖敏感操作，或跨文件传播是否真实时。"
   },
@@ -44,6 +46,7 @@
       "related-code"
     ],
     "cwes": [],
+    "aliases": ["安全不变量", "根因分析", "变体分析", "授权矩阵", "security invariant", "root cause", "variant analysis"],
     "path": "methodology/policy-and-related-code.md",
     "useWhen": "同一政策覆盖多个入口，或需要判断相似代码是否应另立待查项时。"
   },
@@ -60,6 +63,7 @@
       "validation"
     ],
     "cwes": [],
+    "aliases": ["反证", "证据链", "误报", "可达性", "counterevidence", "false positive"],
     "path": "methodology/evidence-and-uncertainty.md",
     "useWhen": "证据来自不同文件、存在规则命中、源码不足或准备移交 Validator 时。"
   },
@@ -80,6 +84,7 @@
       "promises"
     ],
     "cwes": [],
+    "aliases": ["类型断言", "对象继承", "原型链", "运行时校验", "TypeScript assertion", "property lookup"],
     "path": "languages/javascript-typescript.md",
     "useWhen": "遇到类型断言、动态派发、解构、深合并或 Promise 管理的控制时。"
   },
@@ -102,6 +107,7 @@
       "async"
     ],
     "cwes": [],
+    "aliases": ["Node.js", "Node", "进程环境", "文件句柄", "文件描述符", "file descriptor", "process lifecycle"],
     "path": "languages/nodejs-runtime.md",
     "useWhen": "任务涉及 Node 进程、文件 I/O、出站访问、并发或日志时。"
   },
@@ -125,6 +131,7 @@
       "storage"
     ],
     "cwes": [],
+    "aliases": ["微信小程序", "小程序登录", "微信登录", "WebView 消息", "wx.login", "code2session", "WeChat Mini Program"],
     "path": "frameworks/wechat-miniapp.md",
     "useWhen": "任务涉及 app.json、WXML、wx.login、wx.request、本地存储或 web-view 时。"
   },
@@ -148,6 +155,7 @@
       "authorization"
     ],
     "cwes": [],
+    "aliases": ["微信云开发", "云函数", "云数据库", "云存储", "CloudBase", "getWXContext", "OPENID", "security rules"],
     "path": "frameworks/wechat-cloud-development.md",
     "useWhen": "涉及云函数 exports.main、action、getWXContext 或云数据库时。"
   },
@@ -171,6 +179,7 @@
       "errors"
     ],
     "cwes": [],
+    "aliases": ["Express.js", "路由挂载", "中间件顺序", "Express middleware", "router mount", "error handler"],
     "path": "frameworks/express-routing.md",
     "useWhen": "索引或源码显示 Express app、Router、中间件、统一错误处理时。"
   },
@@ -199,6 +208,7 @@
       "CWE-384",
       "CWE-613"
     ],
+    "aliases": ["认证", "会话劫持", "登录态", "会话固定", "令牌验证", "broken authentication", "session fixation", "JWT", "token verification"],
     "path": "vulnerabilities/authentication-session.md",
     "useWhen": "任务涉及登录、鉴权中间件、Token、Cookie、跨通道会话或退出。"
   },
@@ -228,6 +238,7 @@
       "CWE-863",
       "CWE-639"
     ],
+    "aliases": ["对象级授权", "水平越权", "垂直越权", "跨租户", "访问控制", "BOLA", "IDOR", "object-level authorization", "tenant isolation"],
     "path": "vulnerabilities/object-authorization.md",
     "useWhen": "读取、修改、删除、批量处理或导出使用外部资源 ID 时。"
   },
@@ -251,6 +262,7 @@
     "cwes": [
       "CWE-89"
     ],
+    "aliases": ["SQLi", "SQL 注入", "参数绑定", "预编译语句", "prepared statement", "parameterized query", "node-postgres", "mysql2", "Prisma"],
     "path": "vulnerabilities/sql-injection.md",
     "useWhen": "任务涉及 SQL 查询、原生查询、ORM raw 或可配置排序筛选时。"
   },
@@ -275,6 +287,7 @@
     "cwes": [
       "CWE-943"
     ],
+    "aliases": ["NoSQLi", "NoSQL 注入", "MongoDB 注入", "查询操作符", "查询对象", "query selector injection", "MongoDB", "Mongoose", "sanitizeFilter"],
     "path": "vulnerabilities/nosql-injection.md",
     "useWhen": "MongoDB、云数据库或其他文档查询使用外部对象、动态过滤或更新字段时。"
   },
@@ -299,6 +312,7 @@
       "CWE-78",
       "CWE-88"
     ],
+    "aliases": ["命令注入", "操作系统命令注入", "进程执行", "OS command injection", "shell injection", "argument injection", "child_process", "execFile", "RCE"],
     "path": "vulnerabilities/command-execution.md",
     "useWhen": "源码出现 child_process 或包装器，且入参来自任务设置、请求或资源元数据。"
   },
@@ -323,6 +337,7 @@
     "cwes": [
       "CWE-918"
     ],
+    "aliases": ["服务端请求伪造", "服务器端请求伪造", "SSRF", "server-side request forgery", "outbound requests", "redirect"],
     "path": "vulnerabilities/ssrf.md",
     "useWhen": "服务端处理器、代理、Webhook、预览或下载任务会访问变动 URL 时。"
   },
@@ -348,6 +363,7 @@
     "cwes": [
       "CWE-79"
     ],
+    "aliases": ["跨站脚本", "DOM XSS", "HTML 注入", "XSS", "cross-site scripting", "output encoding", "innerHTML"],
     "path": "vulnerabilities/xss.md",
     "useWhen": "任务涉及模板、DOM、富文本、HTML 响应或小程序 WebView 页面。"
   },
@@ -373,6 +389,7 @@
       "CWE-22",
       "CWE-59"
     ],
+    "aliases": ["目录遍历", "任意文件读取", "路径穿越", "符号链接", "directory traversal", "path traversal", "symlink"],
     "path": "vulnerabilities/path-traversal.md",
     "useWhen": "文件处理、下载、模板、归档或对象存储使用外部路径或文件标识时。"
   },
@@ -398,6 +415,7 @@
     "cwes": [
       "CWE-434"
     ],
+    "aliases": ["任意文件上传", "文件类型验证", "附件权限", "临时下载链接", "unrestricted file upload", "multipart", "content sniffing"],
     "path": "vulnerabilities/file-upload.md",
     "useWhen": "涉及 multipart、云存储、附件、头像、归档或文件预览时。"
   },
@@ -422,6 +440,7 @@
       "CWE-502",
       "CWE-95"
     ],
+    "aliases": ["不安全反序列化", "对象重建", "不可信数据解析", "insecure deserialization", "unsafe deserialization", "reviver"],
     "path": "vulnerabilities/deserialization.md",
     "useWhen": "涉及序列化库、自定义还原器、持久化对象或跨系统消息。"
   },
@@ -451,6 +470,7 @@
       "CWE-532",
       "CWE-798"
     ],
+    "aliases": ["敏感信息泄露", "隐私数据", "硬编码密钥", "日志脱敏", "information disclosure", "secret leakage", "PII", "log redaction"],
     "path": "vulnerabilities/sensitive-disclosure.md",
     "useWhen": "任务涉及日志、异常、响应映射、构建常量、源代码中的凭据或客户端缓存。"
   },
@@ -475,6 +495,7 @@
       "CWE-1321",
       "CWE-915"
     ],
+    "aliases": ["原型污染", "继承属性", "动态键", "深度合并", "prototype pollution", "deep merge", "inherited property"],
     "path": "vulnerabilities/prototype-pollution.md",
     "useWhen": "存在深合并、动态对象路径、配置选项或根据继承值作权限判断时。"
   },
@@ -499,6 +520,7 @@
     "cwes": [
       "CWE-601"
     ],
+    "aliases": ["开放重定向", "开放跳转", "未验证跳转", "open redirect", "unvalidated redirect", "returnTo"],
     "path": "vulnerabilities/open-redirect.md",
     "useWhen": "接口生成 Location，接受 returnTo，或小程序网页跳转依赖外部参数。"
   },
@@ -524,6 +546,7 @@
       "CWE-330",
       "CWE-321"
     ],
+    "aliases": ["密码学", "签名验证", "密钥管理", "加密完整性", "弱随机数", "cryptographic failure", "AEAD", "AES-GCM", "randomness"],
     "path": "vulnerabilities/cryptography.md",
     "useWhen": "涉及口令、签名、加密存储、Token、随机数或密钥生命周期时。"
   },
@@ -549,6 +572,7 @@
       "CWE-362",
       "CWE-367"
     ],
+    "aliases": ["竞态条件", "竞争条件", "并发", "检查到使用", "TOCTOU", "race condition", "check then use", "atomic update"],
     "path": "vulnerabilities/race-toctou.md",
     "useWhen": "任务涉及异步更新、文件检查后使用、任务重试、计数或资金状态转换。"
   },
@@ -571,6 +595,7 @@
       "CWE-840",
       "CWE-841"
     ],
+    "aliases": ["业务逻辑漏洞", "状态机", "审批流程", "幂等", "业务不变量", "business logic", "workflow bypass", "state transition"],
     "path": "vulnerabilities/business-invariants.md",
     "useWhen": "存在多步骤业务、审批、库存、优惠、计数、批处理或恢复流程。"
   },
@@ -598,6 +623,7 @@
       "CWE-841",
       "CWE-345"
     ],
+    "aliases": ["订单支付", "微信支付", "支付回调", "退款通知", "金额校验", "WeChat Pay", "payment callback", "refund", "order consistency"],
     "path": "vulnerabilities/payment-order.md",
     "useWhen": "任务涉及下单、价格、支付、第三方通知、退款或积分流水时。"
   }

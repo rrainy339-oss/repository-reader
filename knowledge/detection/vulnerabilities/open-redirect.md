@@ -14,6 +14,12 @@
 
 对照例通过已知页面标识选择应用内固定路由，而不把外部字符串当成最终目的地。对允许外站的功能明确业务政策并检查精确目标。引用输入、解析、检查与输出；导航到预登记身份提供方或恰当验证后生成的站内地址可能符合预期。客户端配置的作用范围另按平台资料确认。
 
+## 跳到哪里，由哪个组件决定
+
+追踪 `returnTo`、订单返回页、OAuth 登录完成页和 WebView `src`，直到真正写入 `Location` 或导航 API。确定校验与消费者使用的解析规则，比较目标协议、来源及允许的路径。若服务接收导航键并从服务端固定映射选路径，查失败分支也用固定默认值。以请求 Host 构造基址时，要核实网关或框架对 Host 的来源约束。向用户显示目标域名只是 UI 提示，服务端仍可能使用另一个值。
+
+例如，账户模块在登录前存下经过本站导航策略验证的路由 ID，回调只从内建表取站内目标。读回调和存储序列化，确认未从原始请求重新取 URL。浏览器导航目的地可影响用户和认证流程。SSRF 调查关注服务端外联，看到相同的 URL API 时按消费点判断。发生跨域导航亦不自动证明授权码、Cookie 或 Token 会送达，需看应用显式转发和浏览器实际的凭据策略。
+
 ## References
 
 - [OWASP · Unvalidated Redirects and Forwards](https://github.com/OWASP/CheatSheetSeries/blob/05861f28ed88269db390afeb67486abc0adfc076/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.md)

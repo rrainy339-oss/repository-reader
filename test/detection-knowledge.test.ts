@@ -40,6 +40,49 @@ test('catalog lists and pages relevant knowledge by category, language, framewor
   assert.ok(!('content' in head.items[0]));
 });
 
+test('catalog ranks bilingual aliases and accepts CWE numbers in free text and filters', async () => {
+  const query = navigate();
+  for (const alias of ['BOLA', '对象级授权']) {
+    assert.equal((await query(listName, { query: alias })).items[0].id, 'object-authorization');
+  }
+  for (const cwe of ['CWE‑089', 'cwe 89', '89']) {
+    assert.equal((await query(listName, { query: cwe })).items[0].id, 'sql-injection');
+    assert.equal((await query(listName, { cwe })).items[0].id, 'sql-injection');
+  }
+  assert.equal((await query(listName, { query: 'NoSQLi' })).items[0].id, 'nosql-injection');
+  assert.ok(!(await query(listName, { query: 'SQL' })).items.some((item: { id: string }) => item.id === 'nosql-injection'));
+});
+
+test('catalog ranks matches across multiple terms and keeps rankings through pagination', async () => {
+  const query = navigate();
+  const params = { query: 'SSRF redirect' };
+  const ranked = await query(listName, params);
+  assert.equal(ranked.items[0].id, 'ssrf');
+  assert.ok(ranked.items.some((item: { id: string }) => item.id === 'open-redirect'));
+  const first = await query(listName, { ...params, limit: 1 });
+  const second = await query(listName, { ...params, limit: 1, offset: first.nextOffset });
+  assert.equal(second.items[0].id, ranked.items[1].id);
+  assert.equal((await query(listName, { query: 'IDOR 租户' })).items[0].id, 'object-authorization');
+  assert.match((await query(listName, { query: 'zzcatalogunknownword' })).hint, /keywords/);
+});
+
+test('catalog includes general guides by default and supports exact platform filters', async () => {
+  const query = navigate();
+  const filters = { language: 'JavaScript', framework: 'cloudbase', limit: 100 };
+  const scoped = await query(listName, filters);
+  assert.equal(scoped.items[0].id, 'wechat-cloud-development');
+  const ids = scoped.items.map((item: { id: string }) => item.id);
+  assert.ok(ids.includes('source-navigation'));
+  assert.ok(ids.includes('business-invariants'));
+  assert.ok(!ids.includes('express-routing'));
+  const strict = await query(listName, { ...filters, includeGeneral: false });
+  assert.ok(strict.items.length > 0);
+  for (const item of strict.items) {
+    assert.ok(item.languages.includes('javascript'));
+    assert.ok(item.frameworks.includes('cloudbase'));
+  }
+});
+
 test('each registered guide resolves and vulnerability guides include controls, evidence and counterexamples', async () => {
   const query = navigate();
   const { items } = await query(listName, { limit: 100 });
@@ -90,7 +133,9 @@ test('Detection reads optional app guides without treating target knowledge or g
     ({ messages }) => {
       const initial = JSON.stringify(messages);
       assert.match(initial, /list_detection_knowledge/);
-      assert.doesNotMatch(initial, /数据库接收的查询结构|MARKER_FROM_TARGET_REPOSITORY/);
+      assert.match(initial, /knowledgeDirectory/);
+      assert.match(initial, /sql-injection.*useWhen/);
+      assert.doesNotMatch(initial, /数据库接收的查询结构|CATALOG_ENDPOINT|MARKER_FROM_TARGET_REPOSITORY/);
       return call(listName, { cwe: 'CWE-89' });
     },
     ({ messages }) => {

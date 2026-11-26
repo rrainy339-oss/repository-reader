@@ -95,7 +95,7 @@ npm.cmd run --silent discover -- --map 'benchmark-results/minimax-m3-2026-11-22T
 
 ## Detection Agent
 
-Detection 可按需查询项目自带的[审计知识库](knowledge/detection/index.json)。目录包括源码阅读与证据方法、漏洞专题、JavaScript 与 TypeScript 和 Node.js 语言知识，以及微信小程序、云开发和 Express 平台知识。`list_detection_knowledge` 支持 `category`、`language`、`framework`、`topic`、`cwe` 和 `query`，可用 `nextOffset` 继续查询。`read_detection_knowledge` 按登记 ID 读取 Markdown。
+Detection 在任务上下文中获得知识 ID 和适用场景，并可按需查询项目自带的[审计知识库](knowledge/detection/index.json)。`list_detection_knowledge` 支持 `category`、`language`、`framework`、`topic`、`cwe` 和 `query`。查询支持中英文关键词、别名和 CWE 编号，可用空格分隔多个概念。结果按相关性排序，可用 `nextOffset` 继续。未标注相应语言或框架的通用手册默认保留，传入 `includeGeneral: false` 可仅查所选标签。查询无结果时可尝试减少关键词或放宽过滤条件。`read_detection_knowledge` 按登记 ID 读取 Markdown。
 
 知识内容用于选择分析角度与检查反证。证据仍通过 `read_lines` 或 `get_symbol_code` 在本轮从目标仓库取得，业务规则仍以项目资料和适用来源为准。目录按项目安装位置加载。调研文件、固定版本、许可及访问限制见[来源说明](knowledge/detection/SOURCES.md)。
 

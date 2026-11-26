@@ -17,6 +17,7 @@ const entrySchema = z.strictObject({
   languages: z.array(text),
   frameworks: z.array(text),
   topics: z.array(text),
+  aliases: z.array(text).default([]),
   cwes: z.array(z.string().regex(/^CWE-\d+$/)),
   path: z.string().regex(/^(?:methodology|vulnerabilities|languages|frameworks)\/[a-z0-9-]+\.md$/),
   useWhen: text,
@@ -63,13 +64,54 @@ function getCatalog() {
 const listInput = z.strictObject({
   query: text.optional(), category: categories.optional(),
   language: text.optional(), framework: text.optional(), topic: text.optional(), cwe: text.optional(),
+  includeGeneral: z.boolean().default(true).describe('Include untagged guides in each selected language or framework.'),
   offset: z.number().int().nonnegative().default(0),
   limit: z.number().int().positive().default(12),
 });
 const readInput = z.strictObject({ id: knowledgeId });
 
-function hasTag(tags: string[], tag?: string) {
-  return tag === undefined || tags.some((value) => value.toLowerCase() === tag.toLowerCase());
+function normalize(value: string) {
+  return value.normalize('NFKC').toLowerCase().replace(/\bcwe[\s\p{Pd}]*0*(\d+)\b/gu, 'cwe$1');
+}
+
+const segmenter = new Intl.Segmenter('zh', { granularity: 'word' });
+
+function words(value: string) {
+  const terms = [...segmenter.segment(normalize(value))]
+    .filter((part) => part.isWordLike).map((part) => part.segment);
+  return terms.map((term) => /^\d+$/.test(term) ? 'cwe' + (term.replace(/^0+(?=\d)/, '')) : term);
+}
+
+function hasTag(tags: string[], tag?: string, includeGeneral = false) {
+  return tag === undefined || (includeGeneral && tags.length === 0)
+    || tags.some((value) => normalize(value) === normalize(tag));
+}
+
+function hasCwe(tags: string[], cwe?: string) {
+  if (cwe === undefined) return true;
+  const id = normalize(/^\d+$/.test(cwe) ? 'CWE-' + cwe : cwe);
+  return tags.some((tag) => normalize(tag) === id);
+}
+
+function relevance(entry: Entry, queryWords: string[], phrase: string) {
+  if (!queryWords.length) return { matched: 0, exact: false, primary: 0 };
+  const primary = [entry.id, entry.title, ...entry.aliases, ...entry.cwes];
+  const primaryWords = new Set(primary.flatMap(words));
+  const otherFields = [entry.summary, entry.useWhen, ...entry.topics, ...entry.languages, ...entry.frameworks];
+  const otherWords = new Set(otherFields.flatMap(words));
+  const descriptions = [...primary, ...otherFields].map(normalize);
+  // Han word boundaries can differ between short queries and full descriptions.
+  const matched = queryWords.filter((word) => primaryWords.has(word) || otherWords.has(word)
+    || (/^\p{Script=Han}{2,}$/u.test(word) && descriptions.some((field) => field.includes(word))));
+  return {
+    matched: matched.length,
+    exact: primary.some((field) => words(field).join(' ') === phrase),
+    primary: matched.filter((word) => primaryWords.has(word)).length,
+  };
+}
+
+export async function getDetectionKnowledgeDirectory() {
+  return [...(await getCatalog()).values()].map(({ id, useWhen }) => ({ id, useWhen }));
 }
 
 export function createDetectionKnowledgeTools(): AgentTool[] {
@@ -77,20 +119,34 @@ export function createDetectionKnowledgeTools(): AgentTool[] {
     {
       name: 'list_detection_knowledge',
       label: 'Find Detection audit guidance',
-      description: 'List curated audit guides by category, language, framework, topic, CWE, or text. Use nextOffset for more.',
+      description: 'Find audit guides using Chinese or English keywords, aliases, and CWE numbers (e.g. CWE-89). Separate key concepts with spaces. Empty language/framework tags are general and included by default. If no results, use fewer keywords, a known alias, or remove filters. Use nextOffset for more.',
       parameters: z.toJSONSchema(listInput, { io: 'input' }),
       async execute(_id, params, signal) {
-        const { query, category, language, framework, topic, cwe, offset, limit } = listInput.parse(params);
+        const { query, category, language, framework, topic, cwe, includeGeneral, offset, limit } = listInput.parse(params);
         signal?.throwIfAborted();
         const index = await getCatalog();
-        const needle = query?.toLowerCase();
-        const items = [...index.values()].filter((entry) =>
-          (!category || entry.category === category) && hasTag(entry.languages, language) && hasTag(entry.frameworks, framework)
-          && hasTag(entry.topics, topic) && hasTag(entry.cwes, cwe)
-          && (!needle || [entry.id, entry.title, entry.summary, entry.useWhen, ...entry.topics]
-            .some((field) => field.toLowerCase().includes(needle))));
+        const phrase = words(query ?? '').join(' ');
+        const queryWords = phrase ? [...new Set(phrase.split(' '))] : [];
+        const items = [...index.values()]
+          .filter((entry) => (!category || entry.category === category)
+            && hasTag(entry.languages, language, includeGeneral) && hasTag(entry.frameworks, framework, includeGeneral)
+            && hasTag(entry.topics, topic) && hasCwe(entry.cwes, cwe))
+          .map((entry) => ({
+            entry,
+            ...relevance(entry, queryWords, phrase),
+            specificity: Number(language !== undefined && entry.languages.length > 0)
+              + Number(framework !== undefined && entry.frameworks.length > 0),
+          }))
+          .filter((item) => query === undefined || item.matched > 0)
+          .sort((left, right) => Number(right.exact) - Number(left.exact) || right.matched - left.matched
+            || right.primary - left.primary || right.specificity - left.specificity);
         const end = offset + limit;
-        return toolResult({ items: items.slice(offset, end), total: items.length, nextOffset: end < items.length ? end : null });
+        return toolResult({
+          items: items.slice(offset, end).map(({ entry }) => entry),
+          total: items.length,
+          nextOffset: end < items.length ? end : null,
+          ...(items.length === 0 && { hint: 'Try fewer keywords, a known alias/CWE, or remove language, framework, or topic filters.' }),
+        });
       },
     },
     {

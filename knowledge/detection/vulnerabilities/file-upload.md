@@ -14,9 +14,17 @@
 
 正例以经授权的上传创建服务端命名的私有对象，并在合适的阶段校验内容与大小。下载时独立核对资源准入和返回行为。扩展名、内容签名、隔离存储、解析器限制与权限各自解决不同问题。引用接受条件、保存位置、公开配置或实际消费端。私有暂存、后处理隔离和服务端指定类型可能限制影响。
 
+## 读完整的上传生命周期
+
+用 `get_file_symbols` 识别 multipart 中间件、存储回调、异步扫描、转码和下载接口。区分解析请求时的体积约束、已解码内容的资源约束、写入权限和发布条件。扩展名、客户端声明的 MIME 和文件探测都只回答各自的问题。要看内容最终被图片解码器、HTML 查看器、归档工具还是浏览器消费。图像重编码可以约束发布表示，前提是原件只存隔离区，下载和预览只消费输出。若失败时回退到公开原件，需复核该失败分支。归档还需确认每个写入目标和展开上限。
+
+一种受控设计是「认证并校验上传关系 → 隔离区保存 → 验证或重编码 → 以服务端生成键发布 → 下载时按业务对象授权」。若系统在扫描结束前已将对象标为可下载，要同时读记录状态、生成 URL 的服务和失败回收逻辑。扫描状态存在但下载不读该状态时，不能算已覆盖。临时链接的时效也不能说明调用端有权向当前用户签发。分别核实是平台客户端规则，还是由具有更高权限的服务端签发。记录解析、存储、发布和实际消费相关路径，再按项目允许的文件类型、内容可见性与保留期判断。
+
+例如，`upload.ts` 返回附件业务 ID，`scan-worker.ts` 仅在重编码成功后把发布键与 `ready` 状态同时保存，`download.ts` 按租户、附件 ID 和 `ready` 谓词查出发布键再签发 URL。用 `search_text` 找两个存储键前缀和所有签发器的调用点，核查是否还有直接按原件 ID 读取的路由。若原件上传后即公开读，下载路由检查 `ready` 只约束这一条访问路径。实际公开范围须结合当前环境的存储配置确认。
+
 ## References
 
 - [OWASP · File Upload](https://github.com/OWASP/CheatSheetSeries/blob/05861f28ed88269db390afeb67486abc0adfc076/cheatsheets/File_Upload_Cheat_Sheet.md)
-- [腾讯 CloudBase · 小程序云数据库](https://docs.cloudbase.net/recipes/add-database-wechat-miniprogram)
-- [腾讯 CloudBase · 云函数访问控制](https://docs.cloudbase.net/cloud-function/security-rules)
+- [腾讯 CloudBase · 小程序云存储、文件权限与临时链接](https://docs.cloudbase.net/recipes/add-file-upload-wechat-miniprogram)
+- [腾讯 CloudBase · SDK 管理文件](https://docs.cloudbase.net/storage/sdk)
 - [版本、许可证及改写说明](../SOURCES.md)
