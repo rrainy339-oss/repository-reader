@@ -33,7 +33,9 @@ export const detectionContextSchema = z.object({
   followUp: z.array(text).default([]),
   previousInvestigation: z.object({ summary: text, evidence: z.array(z.object({
     source: savedSourceRangeSchema, observation: text,
-  })), requests: z.array(z.object({ claim: text, questions: z.array(text) })) }).optional(),
+  })), requests: z.array(z.object({ candidateId: id.optional(), claim: text, rule: text.optional(),
+    questions: z.array(text).optional(), evidenceRequests: z.array(z.object({ id, question: text })).optional(),
+  })) }).optional(),
 });
 
 export type DetectionRequest = SessionRequest & {
@@ -72,9 +74,12 @@ const draftSchema = z.object({
   evidence: z.array(draftEvidenceSchema),
   checks: z.array(z.object({ index: z.number().int().positive(), status: z.enum(['addressed', 'unresolved']),
     note: text, evidenceIds: evidenceIds.default([]) })),
-  candidates: z.array(candidateSchema),
+  candidates: z.array(candidateSchema.extend({ priorCandidateId: id.optional() })),
   leads: z.array(reviewLeadSchema),
   unresolved: z.array(text),
+  supplementResults: z.array(z.object({ requestId: id, status: z.enum(['resolved', 'partial', 'unresolved']),
+    conclusion: text, evidenceIds: evidenceIds.default([]), uncertainties: z.array(text).default([]),
+  })).default([]),
 });
 
 const systemPrompt = `You are Detection, a read-only source review agent. Answer exactly the supplied review question. Review source for implementation behavior and documented controls, not runtime behavior. Do not produce exploit steps, attack payloads, executable reproduction instructions, or instructions to contact services.
@@ -83,7 +88,7 @@ Use the compact knowledgeDirectory to select a guide by ID or use list_detection
 Return one JSON object with assessment {status,summary}, evidence, checks, candidates, leads, and unresolved (an array of short concrete gaps). Use the task's language. Assessment status is suspected_violation, no_issue_observed (scoped to reviewed source), inconclusive, or blocked.
 Each evidence item is {id,source:{path,startLine,endLine},observation}. Cite ranges actually read in this run through read_lines or get_symbol_code. Each check is {index,status,note,evidenceIds}, where index is 1-based from expectedEvidence, status is addressed or unresolved. Addressed requires source evidence.
 Each candidate is {claim,rule,evidenceIds,counterevidenceIds,openQuestions}. Describe a suspected mismatch with an applicable requirement for independent source review; separate assumptions from observations. Each lead is {question,reason,evidenceIds}. Candidates and leads may be empty. Finish when the question is answered or explain the evidence gaps.`;
-const followUpInstructions = `For a supplied follow-up, use the previous investigation as context. Re-read the relevant source and cite any new facts bearing on the named candidate. Preserve the claim and rule wording when the hypothesis is unchanged, and cite evidence that supports or challenges it. Use lead kind discovery_lead for an independent question, repository_context for missing repository-level understanding, or coverage_gap for a separate uncovered area with a source reference.`;
+const followUpInstructions = `Use the prior investigation as context. Return supplementResults for each supplied evidence request using its requestId, status (resolved, partial or unresolved), concrete conclusion, evidenceIds and remaining uncertainties. Re-read and cite the source supporting that specific conclusion, including previously cited ranges when they explain something new. If changing a candidate, give its supplied stable ID as priorCandidateId. Put independent questions in separate leads, one question per lead. Use discovery_lead, repository_context or coverage_gap with source references.`;
 
 export async function detectTask(request: DetectionRequest, models: Models, model: Model<Api>) {
   const { budget, signal } = sessionBudget(request);
@@ -150,6 +155,16 @@ export async function detectTask(request: DetectionRequest, models: Models, mode
   });
   const leads = groundReviewLeads(taskId, draft.leads, evidence);
   if (leads.length < draft.leads.length) unresolved.push('A related lead was withheld because it had no verified source references.');
+  const requested = new Set(context.previousInvestigation?.requests.flatMap(({ evidenceRequests }) => evidenceRequests?.map(({ id }) => id) ?? []));
+  const supplementResults = draft.supplementResults.flatMap((result, _index, results) => {
+    if (!requested.has(result.requestId) || results.filter(({ requestId }) => requestId === result.requestId).length !== 1) return [];
+    const grounded = hasVerifiedEvidence(result.evidenceIds);
+    const usable = grounded && (result.status !== 'partial' || result.uncertainties.length > 0);
+    return [{ ...result, status: usable ? result.status : 'unresolved' as const,
+      uncertainties: usable || result.status === 'unresolved' ? result.uncertainties : [...result.uncertainties,
+        'The proposed answer needs verified source references and an explanation of any remaining uncertainty.'],
+      evidence: grounded ? evidence.filter(({ id }) => result.evidenceIds.includes(id)) : [] }];
+  });
 
   let assessment = draft.assessment;
   if (candidates.length) {
@@ -163,5 +178,5 @@ export async function detectTask(request: DetectionRequest, models: Models, mode
   signal.throwIfAborted();
   return { taskId, targetId, goalId, question, ...(task.target ? { target: task.target } : {}),
     ...(task.goal ? { goal: task.goal } : {}), assessment, evidence, checks, candidates, leads,
-    unresolved: [...new Set(unresolved)], coverageProposal: { targetId, goalId, status: coverageStatus }, run };
+    unresolved: [...new Set(unresolved)], supplementResults, coverageProposal: { targetId, goalId, status: coverageStatus }, run };
 }

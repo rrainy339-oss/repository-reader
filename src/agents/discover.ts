@@ -35,6 +35,7 @@ export const discoverStateSchema = z.object({
   tasks: z.array(z.object({ ...pair, id, question: text, target: taskTargetSchema.optional(), status: z.enum(['pending', 'in_progress', 'completed', 'blocked']) })).default([]),
   feedback: z.array(z.object({ id, kind: feedbackKindSchema,
     note: text, recordIds: z.array(id).default([]), taskId: id.optional(), question: text.optional(), reason: text.optional(),
+    remainingQuestions: z.array(text).optional(), reasonUnresolved: text.optional(),
     evidence: z.array(savedSourceRangeSchema).optional() })).default([]),
 });
 
@@ -46,6 +47,10 @@ const actionContext = {
 };
 const planSchema = z.object({
   hasMore: z.boolean().default(false),
+  feedbackOutcomes: z.array(z.object({ feedbackId: id,
+    status: z.enum(['addressed', 'covered', 'not_applicable', 'deferred', 'needs_information']), reason: text,
+    taskIds: z.array(id).default([]), remainingQuestions: z.array(text).default([]), addressedQuestions: z.array(text).default([]),
+  })).default([]),
   actions: z.array(z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('create_task'), targetId: id.optional(), target: sourceTargetProposalSchema.optional(),
       source: sourceRangeSchema.optional(), goalId: id.optional(), goal: proposedGoalSchema.optional(), question: text,
@@ -101,6 +106,7 @@ When an index is available, use query_entries to find unread entry candidates an
 Use create_task for an applicable goal at a target without existing work. Optionally set priority to high, normal or low. Use supplement_task for actionable new information on an existing task. In a standalone plan, this can include a supplied verification_gap. Use request_repository_read when a missing repository fact blocks planning. A missing coverage row alone does not establish that a goal applies.
 Understand the feature, protected assets and sensitive operations. Identify inputs and trust boundaries, infer the smallest meaningful business constraint, then ask a source-grounded question. Use the trusted knowledge as prompts for reasoning. Pick the checks that apply to this repository and avoid expanding every entry against every goal. Treat rule hits as leads, read the actual code before using them, and continue from code and business context when scanning is unavailable or produces no hits.
 Before adding work, query_tasks for the same target and compare questions and goal descriptions. Reuse an existing check when it answers the same security question, and supplement it with actionable new evidence. Independently meaningful constraints may have separate tasks even in the same category. Preserve existing task IDs and coverage states.
+Report feedbackOutcomes by feedbackId. Use addressed only for work in create_task or supplement_task actions carrying that feedbackId. Use covered with related existing taskIds, not_applicable with the concrete basis, or deferred or needs_information with the reason. Always list any remainingQuestions, including independent parts not covered by the proposed work. When revisiting remaining questions, list their exact text in addressedQuestions only for parts covered by the linked work or shown to be inapplicable.
 Return one JSON object with an actions array and optional hasMore when meaningful proposals remain for a follow-up plan. Each action includes kind, reason, and optionally relatedRecordIds, feedbackIds and discoverySources. A discovery source may be a kind string or {kind,referenceId} using IDs returned by tools. Kinds are rule_hit, entry_point, security_goal, detection_lead, coverage_gap and code_exploration. create_task requires question and expectedEvidence (a list of source facts to check). For a map target use its targetId. For an indexed entry or symbol use its ID as targetId and provide source {path,startLine,endLine} from this session that covers the declaration. For an unmapped file or narrower business logic provide target {kind:"file" or "source", source:{path,startLine,endLine}} from this session. Use goalId for an existing goal or goal {title,description, optional id} for a new requirement. supplement_task requires taskId and note. request_repository_read requires a concrete question, with a focus label or a known targetId if available. Use exact IDs from the tools. An empty actions array is valid. Write in the language of the task or stated goals.`;
 
 const phaseInstructions: { [Phase in DiscoveryPhase]: string } = {
@@ -264,7 +270,7 @@ export async function discoverTasks(request: DiscoverRequest, models: Models, mo
   const accepted = new Map<string, Action & { discoverySources: DiscoverySource[] }>();
   const hits = new Map(ruleScan.hits.map((hit) => [hit.id, hit]));
   const addedGoals = new Map<string, State['goals'][number]>();
-  const discarded: { index: number; reason: string }[] = [];
+  const discarded: { index: number; reason: string; feedbackIds?: string[] }[] = [];
   for (const [index, proposal] of draft.actions.entries()) {
     signal.throwIfAborted();
     try {
@@ -275,18 +281,23 @@ export async function discoverTasks(request: DiscoverRequest, models: Models, mo
         : JSON.stringify([action.kind, action.targetId, action.focus, action.question]);
       const previous = accepted.get(key);
       if (previous) {
+        if (action.kind === 'create_task' && previous.kind === 'create_task'
+          && (action.question !== previous.question || JSON.stringify(action.expectedEvidence) !== JSON.stringify(previous.expectedEvidence))) {
+          throw new Error('A different question for this target and goal was not merged into the accepted action.');
+        }
         previous.relatedRecordIds = [...new Set([...previous.relatedRecordIds, ...action.relatedRecordIds])];
         previous.feedbackIds = [...new Set([...previous.feedbackIds, ...action.feedbackIds])];
         previous.discoverySources = mergeDiscoverySources(previous.discoverySources, action.discoverySources);
         discarded.push({ index, reason: 'Duplicate proposal; retained its source IDs on the first action.' });
-      } else if (maxActions && accepted.size >= maxActions) discarded.push({ index, reason: 'Requested action budget exhausted.' });
+      } else if (maxActions && accepted.size >= maxActions) throw new Error('Requested action budget exhausted.');
       else {
         accepted.set(key, action);
         if (action.kind === 'create_task' && action.goal && !goals.has(action.goalId)) addedGoals.set(action.goalId, action.goal);
         if (action.kind !== 'request_repository_read' && action.target) targets.set(action.target.id, action.target);
       }
     } catch (error) {
-      discarded.push({ index, reason: (error as Error).message });
+      const feedbackIds = proposal.feedbackIds.filter((id) => feedback.has(id));
+      discarded.push({ index, reason: (error as Error).message, ...(feedbackIds.length ? { feedbackIds } : {}) });
     }
   }
 
@@ -417,6 +428,8 @@ export async function discoverTasks(request: DiscoverRequest, models: Models, mo
   const referencedHits = new Set([...accepted.values()].flatMap(({ discoverySources }) =>
     discoverySources.flatMap((source) => source.kind === 'rule_hit' && source.referenceId ? [source.referenceId] : [])));
   return { phase, focus, ruleHitSummary: ruleScan.summary, referencedRuleHits: [...referencedHits].map((id) => hits.get(id)!),
+    feedbackOutcomes: draft.feedbackOutcomes.filter(({ feedbackId }, _index, outcomes) => feedback.has(feedbackId)
+      && outcomes.filter((item) => item.feedbackId === feedbackId).length === 1),
     hasMore: draft.hasMore, goals: [...addedGoals.values()], actions: [...accepted.values()].map((action) => {
     const targetId = action.kind === 'supplement_task' ? tasks.get(action.taskId)!.targetId : action.targetId;
     const feedbackRecords = action.feedbackIds.flatMap((feedbackId) => feedback.get(feedbackId)!.recordIds);

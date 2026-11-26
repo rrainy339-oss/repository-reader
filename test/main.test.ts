@@ -132,7 +132,8 @@ test('Detection batches duplicate leads into an incremental plan and skips alrea
       leadId = plan.newLeads[0].id;
       return read(service);
     },
-    () => reply({ actions: [proposal(service, question, { feedbackIds: [leadId] })] }),
+    () => reply({ actions: [proposal(service, question, { feedbackIds: [leadId] })],
+      feedbackOutcomes: [{ feedbackId: leadId, status: 'addressed', reason: '新任务覆盖该入口。' }] }),
     call('run_task_batch', { module: 'service.js' }), read(service),
     reply(detection({ evidence: [evidence(service)], leads: [{ ...lead, evidenceIds: ['original'] }] })),
     reply({ summary: '增量检查结束。' }),
@@ -145,6 +146,193 @@ test('Detection batches duplicate leads into an incremental plan and skips alrea
   assert.equal(result.feedback[0].status, 'processed');
   assert.equal(result.tasks[1].action.discoverySources[0].kind, 'detection_lead');
   assert.equal(result.pending.discoverReady, false);
+});
+
+test('Discover retains untouched feedback and the remaining part of a lead after accepting a task', async (t) => {
+  const { faux, run } = await fixture(t);
+  const first = '服务的初始化与回收规则是什么？';
+  const second = '服务配置从哪里加载？';
+  const remaining = '服务的回收规则是什么？';
+  let firstId = '';
+  let secondId = '';
+  faux.setResponses([
+    ...firstPlan(proposal()),
+    call('run_task_batch'), read(), read(service),
+    reply(detection({ evidence: [evidence(), evidence(service, 'service')], leads: [first, second].map((question) =>
+      ({ question, reason: '需另行检查服务。', evidenceIds: ['service'] })) })),
+    call('run_discover'),
+    ({ messages }) => {
+      const leads = input(messages).newLeads;
+      firstId = leads.find(({ question }: { question: string }) => question === first).id;
+      secondId = leads.find(({ question }: { question: string }) => question === second).id;
+      return read(service);
+    },
+    () => reply({ actions: [proposal(service, '服务的初始化规则是什么？', { feedbackIds: [firstId] })],
+      feedbackOutcomes: [{ feedbackId: firstId, status: 'addressed', reason: '初始化已派单，回收仍待分析。', remainingQuestions: [remaining] }] }),
+    call('run_task_batch', { taskIds: ['task-2'] }), read(service), reply(detection({ evidence: [evidence(service)] })),
+    call('run_discover'),
+    ({ messages }) => {
+      assert.match(output(messages, 'run_discover').error, /no pending planning signal/);
+      return reply({ summary: '本轮工作已执行，两个线索仍有缺口。' });
+    },
+  ]);
+  const result = await run();
+  assert.equal(result.error, null);
+  assert.equal(result.status, 'work_remaining');
+  assert.equal(result.pending.pendingTasks.length, 0);
+  assert.equal(result.pending.discoverReady, false);
+  assert.equal(result.pending.repositoryCoverage, 'unknown');
+  const outstanding = new Map(result.pending.unresolvedFeedback.map((item) => [item.id, item]));
+  assert.deepEqual(outstanding.get(firstId)?.remainingQuestions, [remaining]);
+  assert.deepEqual(outstanding.get(firstId)?.workIds, ['task-2']);
+  assert.match(outstanding.get(secondId)?.reasonUnresolved ?? '', /no complete disposition/);
+  assert.equal(result.plans.length, 2);
+});
+
+test('a rejected action and a false coverage claim leave the source lead unresolved', async (t) => {
+  const { faux, run } = await fixture(t);
+  const question = '服务是否在单独入口设定默认值？';
+  let feedbackId = '';
+  faux.setResponses([
+    ...firstPlan(proposal()),
+    call('run_task_batch'), read(), read(service),
+    reply(detection({ evidence: [evidence(), evidence(service, 'service')],
+      leads: [{ question, reason: '有独立实现。', evidenceIds: ['service'] }] })),
+    call('run_discover'),
+    ({ messages }) => {
+      feedbackId = input(messages).newLeads[0].id;
+      return reply({ actions: [proposal(service, question, { feedbackIds: [feedbackId] })],
+        feedbackOutcomes: [{ feedbackId, status: 'addressed', reason: '服务专项已安排。' }] });
+    },
+    ({ messages }) => {
+      assert.equal(output(messages, 'run_discover').discarded, 1);
+      return call('run_discover', { focus: '复查主入口是否能覆盖服务线索', feedbackIds: [feedbackId] });
+    },
+    ({ messages }) => {
+      assert.match(input(messages).newLeads[0].reasonUnresolved, /not fully read/);
+      return reply({ actions: [], feedbackOutcomes: [{ feedbackId, status: 'covered', reason: '已有入口任务。',
+        taskIds: ['task-1'] }] });
+    },
+    reply({ summary: '服务线索仍待检查。' }),
+  ]);
+  const result = await run();
+  assert.equal(result.error, null);
+  assert.equal(result.tasks.length, 1);
+  assert.deepEqual(result.plans[1].discarded[0].feedbackIds, [feedbackId]);
+  assert.equal(result.pending.unresolvedFeedback[0].id, feedbackId);
+  assert.match(result.pending.unresolvedFeedback[0].reasonUnresolved ?? '', /source-linked coverage/);
+  assert.equal(result.pending.discoverReady, false);
+});
+
+test('Discover can close a lead linked to eligible existing source work without opening another task', async (t) => {
+  const { faux, run } = await fixture(t);
+  faux.setResponses([
+    ...firstPlan(proposal(), proposal(service, '服务的初始化规则是什么？')),
+    call('run_task_batch', { taskIds: ['task-1'] }), read(), read(service),
+    reply(detection({ evidence: [evidence(), evidence(service, 'service')],
+      leads: [{ question: '服务如何选择初始值？', reason: '检查独立实现。', evidenceIds: ['service'] }] })),
+    call('run_discover'),
+    ({ messages }) => reply({ actions: [], feedbackOutcomes: [{ feedbackId: input(messages).newLeads[0].id,
+      status: 'covered', reason: '已有任务检查该函数的初始化规则。', taskIds: ['task-2'] }] }),
+    call('run_task_batch', { taskIds: ['task-2'] }), read(service), reply(detection({ evidence: [evidence(service)] })),
+    reply({ summary: '已有任务已检查该线索。' }),
+  ]);
+  const result = await run();
+  assert.equal(result.error, null);
+  assert.equal(result.tasks.length, 2);
+  assert.equal(result.feedback[0].status, 'processed');
+  assert.deepEqual(result.feedback[0].workIds, ['task-2']);
+  assert.equal(result.pending.discoverReady, false);
+  assert.equal(result.status, 'queue_drained');
+});
+
+test('an unapplied supplement cannot close a previously recorded independent question', async (t) => {
+  const { faux, run } = await fixture(t);
+  const remaining = '检查服务端状态回收。';
+  let feedbackId = '';
+  const action = () => ({ kind: 'supplement_task', taskId: 'task-1', note: '检查初始化的影响。', reason: '已有任务可复用。',
+    feedbackIds: [feedbackId] });
+  faux.setResponses([
+    ...firstPlan(proposal()),
+    call('run_task_batch'), read(),
+    reply(detection({ leads: [{ question: '检查初始化和状态回收。', reason: '状态管理源码相关。', evidenceIds: ['original'] }] })),
+    call('run_discover'),
+    ({ messages }) => {
+      feedbackId = input(messages).newLeads[0].id;
+      return reply({ actions: [action()], feedbackOutcomes: [{ feedbackId, status: 'addressed', reason: '已覆盖初始化。',
+        remainingQuestions: [remaining] }] });
+    },
+    () => call('run_discover', { focus: '检查余下的回收问题', feedbackIds: [feedbackId] }),
+    () => reply({ actions: [action()], feedbackOutcomes: [{ feedbackId, status: 'addressed', reason: '已处理回收。',
+      addressedQuestions: [remaining] }] }),
+    ({ messages }) => {
+      assert.equal(output(messages, 'run_discover').supplemented, 0);
+      return reply({ summary: '原补充任务不涵盖状态回收。' });
+    },
+  ]);
+  const result = await run();
+  assert.equal(result.error, null);
+  assert.equal(result.plans[2].actions.length, 1);
+  assert.deepEqual(result.pending.unresolvedFeedback[0].remainingQuestions, [remaining]);
+  assert.match(result.pending.unresolvedFeedback[0].reasonUnresolved ?? '', /No linked proposal was applied/);
+});
+
+test('selected tasks take turns and a repeated analysis cannot reopen validation', async (t) => {
+  const { faux, run } = await fixture(t);
+  const firstGap = '状态从哪一层写入？';
+  const secondGap = '读路径如何解释状态？';
+  let firstId = '';
+  let secondId = '';
+  const conclusion = '入口将初始化状态写入本地变量。';
+  faux.setResponses([
+    ...firstPlan(proposal(handler, '创建时写入哪种状态？', { priority: 'high' }),
+      proposal(service, '服务层怎样初始化？', { priority: 'normal' })),
+    call('run_task_batch', { priority: 'low', module: 'handler.js', goalId: goal.id }),
+    ({ messages }) => {
+      assert.equal(output(messages, 'run_task_batch').selected, 0);
+      return call('run_task_batch', { goalId: goal.id, limit: 2 });
+    },
+    read(), reply(detection({ candidates: [candidate('状态值有误。')] })),
+    read(), reply(decision('needs_evidence', handler, { neededEvidence: [firstGap] })),
+    ({ messages }) => {
+      assert.equal(input(messages).taskId, 'task-2');
+      return read(service);
+    },
+    reply(detection({ evidence: [evidence(service)] })),
+    ({ messages }) => {
+      assert.equal(input(messages).taskId, 'task-1');
+      firstId = input(messages).previousInvestigation.requests[0].evidenceRequests[0].id;
+      return read();
+    },
+    () => reply(detection({ supplementResults: [{ requestId: firstId, status: 'partial', conclusion,
+      uncertainties: ['写入发生在初始化还是延迟更新仍需确认。'], evidenceIds: ['original'] }] })),
+    read(),
+    () => reply(decision('needs_evidence', handler, { neededEvidence: [secondGap],
+      addressedRequests: [{ requestId: firstId, evidenceIds: ['own'] }] })),
+    ({ messages }) => {
+      const [request] = input(messages).previousInvestigation.requests[0].evidenceRequests;
+      secondId = request.id;
+      assert.notEqual(secondId, firstId);
+      assert.equal(request.question, secondGap);
+      return read(service);
+    },
+    () => reply(detection({ evidence: [evidence(service)], supplementResults: [{ requestId: secondId, status: 'resolved',
+      conclusion: conclusion.replace('。', '！'), evidenceIds: ['original'] }] })),
+    ({ messages }) => {
+      const batch = output(messages, 'run_task_batch');
+      assert.deepEqual(batch.recentInvestigations.map(({ taskId }: { taskId: string }) => taskId),
+        ['task-1', 'task-2', 'task-1', 'task-1']);
+      assert.equal(batch.validations, 2);
+      return reply({ summary: '服务任务已处理，当前候选仍缺少读路径证据。' });
+    },
+  ]);
+  const result = await run();
+  assert.equal(result.error, null);
+  assert.equal(result.tasks[1].status, 'completed');
+  assert.equal(result.feedback.find(({ id }) => id === firstId)?.status, 'resolved');
+  assert.match(result.feedback.find(({ id }) => id === secondId)?.reasonUnresolved ?? '', /repeats a conclusion/);
+  assert.equal(result.pending.unresolvedFeedback[0].id, secondId);
+  assert.equal(result.candidates[0].status, 'needs_evidence');
 });
 
 test('ordinary supported and refuted verdicts do not make Discover ready', async (t) => {
@@ -170,6 +358,9 @@ test('a concrete Validator request goes directly to the original Detection task 
   const first = candidate('入口状态值有误。');
   const second = candidate('服务入口状态值有误。');
   const gap = '定位服务层初始值。';
+  const revisedClaim = '该入口直接写入初始状态。';
+  let requestId = '';
+  let candidateId = '';
   faux.setResponses([
     ...firstPlan(proposal()),
     call('run_task_batch'), read(),
@@ -179,19 +370,25 @@ test('a concrete Validator request goes directly to the original Detection task 
     ({ messages }) => {
       const task = input(messages);
       assert.equal(task.taskId, 'task-1');
-      assert.deepEqual(task.followUp, [gap]);
-      assert.deepEqual(task.previousInvestigation.requests, [{ claim: second.claim, questions: [gap] }]);
+      const [requested] = task.previousInvestigation.requests;
+      ({ candidateId } = requested);
+      requestId = requested.evidenceRequests[0].id;
+      assert.deepEqual(requested.evidenceRequests, [{ id: requestId, question: gap }]);
+      assert.equal(requested.claim, second.claim);
+      assert.equal(requested.rule, second.rule);
+      assert.equal(task.previousInvestigation.summary, first.claim);
       assert.equal(task.previousInvestigation.evidence[0].source.path, handler.path);
       return read();
     },
-    read(service),
-    reply(detection({ evidence: [evidence(), evidence(service, 'service')],
-      candidates: [{ ...second, counterevidenceIds: ['service'] }] })),
+    () => reply(detection({ candidates: [{ ...second, claim: revisedClaim, priorCandidateId: candidateId }],
+      supplementResults: [{ requestId, status: 'resolved', conclusion: '入口写入常量，服务读取该值且无额外默认值。', evidenceIds: ['original'] }] })),
     ({ messages }) => {
-      assert.equal(input(messages).claim, second.claim);
+      assert.equal(input(messages).claim, revisedClaim);
+      assert.equal(input(messages).supplements[0].requestId, requestId);
+      assert.equal(input(messages).supplements[0].evidence[0].source.path, handler.path);
       return read();
     },
-    read(service), reply(decision('refuted', service)),
+    () => reply(decision('refuted', handler, { addressedRequests: [{ requestId, evidenceIds: ['own'] }] })),
     reply({ summary: '补证完成。' }),
   ]);
   const result = await run();
@@ -201,11 +398,13 @@ test('a concrete Validator request goes directly to the original Detection task 
   assert.equal(result.tasks[0].attempts[1].validations.length, 1);
   assert.deepEqual(result.findings.map(({ claim }) => claim), [first.claim]);
   assert.deepEqual(result.candidates.map(({ status }) => status), ['supported', 'refuted']);
+  assert.equal(result.candidates[1].candidateId, candidateId);
+  assert.equal(result.candidates[1].claim, revisedClaim);
   assert.deepEqual(result.feedback.map(({ kind, status }) => [kind, status]), [['verification_gap', 'resolved']]);
   assert.equal(result.pending.discoverReady, false);
 });
 
-test('unchanged evidence and repeated questions leave an unresolved candidate and stop the loop', async (t) => {
+test('unrelated evidence and an unlinked rewording leave the original request unresolved', async (t) => {
   const { faux, run } = await fixture(t);
   const unresolved = candidate('服务入口状态值有误。');
   const gap = '定位服务层初始值。';
@@ -213,7 +412,8 @@ test('unchanged evidence and repeated questions leave an unresolved candidate an
     ...firstPlan(proposal()),
     call('run_task_batch'), read(), reply(detection({ candidates: [unresolved] })),
     read(), reply(decision('needs_evidence', handler, { neededEvidence: [gap] })),
-    read(), reply(detection({ candidates: [{ ...unresolved, openQuestions: ['改写同一个问题。'] }] })),
+    read(), read(service), reply(detection({ evidence: [evidence(), evidence(service, 'unrelated')],
+      candidates: [candidate('仅改写同一个候选。', ['original', 'unrelated'])] })),
     call('run_task_batch', { taskIds: ['task-1'] }),
     ({ messages }) => {
       const batch = output(messages, 'run_task_batch');
@@ -229,7 +429,10 @@ test('unchanged evidence and repeated questions leave an unresolved candidate an
   assert.equal(result.tasks[0].attempts[1].validations.length, 0);
   assert.equal(result.coverage[0].status, 'needs_evidence');
   assert.equal(result.feedback[0].status, 'unresolved');
-  assert.match(result.feedback[0].reasonUnresolved ?? '', /did not establish new evidence/);
+  assert.match(result.feedback[0].reasonUnresolved ?? '', /no grounded answer/);
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates[0].claim, unresolved.claim);
+  assert.equal(result.pending.unresolvedFeedback[0].candidateId, result.candidates[0].candidateId);
   assert.equal(result.pending.discoverReady, false);
 });
 
@@ -271,6 +474,9 @@ test('a mapless Discover can request focused repository context when planning ne
   const result = await run();
   assert.equal(result.error, null);
   assert.equal(result.readJobs[0].status, 'completed');
+  assert.equal(result.readJobs[0].resolution, 'unresolved');
+  assert.equal(result.pending.unresolvedReads[0].id, 'read-1');
+  assert.equal(result.status, 'work_remaining');
   assert.equal(result.repositoryReads[0].requestId, 'read-1');
 });
 
@@ -278,6 +484,7 @@ test('Validator routes independent leads and coverage gaps to planning, and repo
   const { faux, run } = await fixture(t);
   const repositoryQuestion = '服务层在哪边信任入口的身份？';
   const lead = { question: '其他创建入口是否应用同一限制？', reason: '代码显示独立入口。', evidenceIds: ['own'] };
+  let contextId = '';
   faux.setResponses([
     ...firstPlan(proposal()),
     call('run_task_batch'), read(), reply(detection({ candidates: [candidate('状态值有误。')] })),
@@ -291,20 +498,31 @@ test('Validator routes independent leads and coverage gaps to planning, and repo
       assert.equal(items.length, 3);
       const context = items.find(({ kind }: { kind: string }) => kind === 'repository_context');
       assert.equal(context.question, repositoryQuestion);
+      contextId = context.id;
       return call('run_repository', { focus: ['创建服务'], feedbackIds: [context.id] });
     },
     ({ messages }) => {
       assert.equal(input(messages).goal, repositoryQuestion);
       assert.deepEqual(input(messages).focus, ['创建服务']);
+      assert.deepEqual(input(messages).questions, [{ id: contextId, question: repositoryQuestion }]);
       return read();
     },
-    reply({ summary: '服务概览', records: [{ kind: 'module', subject: '创建服务',
-      description: '定义创建路径。', basis: 'observed', evidence: [handler] }], unresolved: [] }),
+    () => reply({ summary: '服务概览', records: [{ kind: 'module', subject: '创建服务',
+      description: '定义创建路径。', basis: 'observed', evidence: [handler] }], unresolved: [],
+      answers: [{ requestId: contextId, status: 'answered', summary: '身份来自服务端。', evidence: [service] }] }),
+    ({ messages }) => {
+      assert.equal(output(messages, 'run_repository').answers[0].status, 'unresolved');
+      return call('run_repository', { focus: ['身份来源'], feedbackIds: [contextId] });
+    },
+    read(service),
+    () => reply({ summary: '补读服务实现。', records: [], unresolved: [],
+      answers: [{ requestId: contextId, status: 'answered', summary: '服务入口从已读实现取得身份。', evidence: [service] }] }),
     call('run_discover'),
     ({ messages }) => {
       assert.equal(input(messages).newLeads[0].question, lead.question);
       assert.deepEqual(input(messages).relevantFeedback.map(({ kind }: { kind: string }) => kind), ['coverage_gap']);
-      return reply({ actions: [] });
+      return reply({ actions: [], feedbackOutcomes: [{ feedbackId: input(messages).relevantFeedback[0].id,
+        status: 'not_applicable', reason: '此目标没有后台创建入口。' }] });
     },
     reply({ summary: '已分流线索并补读仓库。' }),
   ]);
@@ -313,7 +531,9 @@ test('Validator routes independent leads and coverage gaps to planning, and repo
   assert.equal(result.findings.length, 1);
   assert.deepEqual(result.plans[1].planning.repositoryRecordIds, ['module:创建服务']);
   assert.equal(result.plans[1].planning.feedbackIds.length, 2);
-  assert.ok(result.feedback.every(({ status }) => status === 'processed'));
+  assert.equal(result.feedback.find(({ id }) => id === contextId)?.status, 'resolved');
+  assert.equal(result.feedback.find(({ kind }) => kind === 'coverage_gap')?.status, 'not_applicable');
+  assert.equal(result.pending.unresolvedFeedback[0].kind, 'discovery_lead');
 });
 
 test('a failed investigation is blocked and prior findings survive', async (t) => {
@@ -374,6 +594,52 @@ test('the shared model budget can stop an active Validator without discarding a 
   assert.equal(result.findings.length, 1);
   assert.deepEqual(result.candidates.map(({ status }) => status), ['supported', 'pending']);
   assert.match(result.candidates[1].reason ?? '', /budget exhausted/);
+});
+
+test('Validator keeps a supplement open when the independent citation does not address it', async (t) => {
+  const { faux, run } = await fixture(t);
+  const gap = '查明服务配置的取值。';
+  let requestId = '';
+  faux.setResponses([
+    ...firstPlan(proposal()),
+    call('run_task_batch'), read(), reply(detection({ candidates: [candidate('状态值有误。')] })),
+    read(), reply(decision('needs_evidence', handler, { neededEvidence: [gap] })),
+    ({ messages }) => {
+      requestId = input(messages).previousInvestigation.requests[0].evidenceRequests[0].id;
+      return read(service);
+    },
+    () => reply(detection({ evidence: [evidence(service)],
+      supplementResults: [{ requestId, status: 'resolved', conclusion: '服务使用代码中定义的默认值。', evidenceIds: ['original'] }] })),
+    read(),
+    () => reply(decision('supported', handler, { addressedRequests: [{ requestId, evidenceIds: ['own'] }] })),
+    reply({ summary: '补证结论仍待独立核验。' }),
+  ]);
+  const result = await run();
+  assert.equal(result.error, null);
+  assert.equal(result.tasks[0].attempts[1].validations[0].verdict, 'needs_evidence');
+  assert.equal(result.pending.unresolvedFeedback[0].id, requestId);
+  assert.equal(result.feedback.length, 1);
+  assert.deepEqual(result.findings, []);
+});
+
+test('cancelling a later candidate review preserves the first confirmed finding', async (t) => {
+  const { faux, run } = await fixture(t);
+  const controller = new AbortController();
+  faux.setResponses([
+    ...firstPlan(proposal()),
+    call('run_task_batch'), read(),
+    reply(detection({ candidates: [candidate('状态值有误。'), candidate('初始化遗漏。')] })),
+    read(), reply(decision('supported')),
+    () => {
+      controller.abort(new Error('Cancelled during independent review.'));
+      return read();
+    },
+  ]);
+  const result = await run({ signal: controller.signal });
+  assert.equal(result.status, 'interrupted');
+  assert.equal(result.stopReason, 'cancelled');
+  assert.deepEqual(result.findings.map(({ claim }) => claim), ['状态值有误。']);
+  assert.equal(result.pending.pendingValidations.length, 1);
 });
 
 test('changed decision evidence marks only the affected candidate stale', async (t) => {
