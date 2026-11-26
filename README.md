@@ -95,6 +95,10 @@ npm.cmd run --silent discover -- --map 'benchmark-results/minimax-m3-2026-11-22T
 
 ## Detection Agent
 
+Detection 可按需查询项目自带的[审计知识库](knowledge/detection/index.json)。目录包括源码阅读与证据方法、漏洞专题、JavaScript 与 TypeScript 和 Node.js 语言知识，以及微信小程序、云开发和 Express 平台知识。`list_detection_knowledge` 支持 `category`、`language`、`framework`、`topic`、`cwe` 和 `query`，可用 `nextOffset` 继续查询。`read_detection_knowledge` 按登记 ID 读取 Markdown。
+
+知识内容用于选择分析角度与检查反证。证据仍通过 `read_lines` 或 `get_symbol_code` 在本轮从目标仓库取得，业务规则仍以项目资料和适用来源为准。目录按项目安装位置加载。调研文件、固定版本、许可及访问限制见[来源说明](knowledge/detection/SOURCES.md)。
+
 一次调查一个源码审计任务。Detection 可以使用共享导航工具定位定义和读取实现，提供地图时也可以用 `query_map` 定位相关上下文。地图和 Discover 的引用提供阅读起点。正式证据来自本次通过 `read_lines` 或 `get_symbol_code` 实际读取且文件内容未变化的源码范围。
 
 把 Discover 输出的 `plan.json` 作为输入。`--action-index` 按整个 `actions` 数组从 1 开始计数，所选动作须为 `create_task`。只有一个这类动作时可以省略索引。`--repo` 应指向生成地图时使用的同一目录。

@@ -1,0 +1,604 @@
+[
+  {
+    "id": "source-navigation",
+    "title": "陌生仓库与跨文件源码阅读",
+    "summary": "核实入口、导入绑定和调用点，从定义索引过渡到源码证据。",
+    "category": "methodology",
+    "languages": [],
+    "frameworks": [],
+    "topics": [
+      "navigation",
+      "imports",
+      "call-sites"
+    ],
+    "cwes": [],
+    "path": "methodology/source-navigation.md",
+    "useWhen": "入口只有地图记录、存在同名定义、跨文件目标不明时。"
+  },
+  {
+    "id": "flow-and-control",
+    "title": "数据传播、分支与信任边界",
+    "summary": "按实际赋值和控制分支核对数据、权限以及副作用。",
+    "category": "methodology",
+    "languages": [],
+    "frameworks": [],
+    "topics": [
+      "data-flow",
+      "control-flow",
+      "trust-boundaries"
+    ],
+    "cwes": [],
+    "path": "methodology/flow-and-control.md",
+    "useWhen": "需要确认某个控制是否覆盖敏感操作，或跨文件传播是否真实时。"
+  },
+  {
+    "id": "policy-and-related-code",
+    "title": "业务规则、根因与同类代码复核",
+    "summary": "把主体、资源和状态约束写清，用于复核共享控制和相邻维护范围。",
+    "category": "methodology",
+    "languages": [],
+    "frameworks": [],
+    "topics": [
+      "business-invariants",
+      "authorization",
+      "related-code"
+    ],
+    "cwes": [],
+    "path": "methodology/policy-and-related-code.md",
+    "useWhen": "同一政策覆盖多个入口，或需要判断相似代码是否应另立待查项时。"
+  },
+  {
+    "id": "evidence-and-uncertainty",
+    "title": "源码证据、反证与不确定性",
+    "summary": "把观察、假设、反证和待补条件装入现有 Detection 与 Validator 契约。",
+    "category": "methodology",
+    "languages": [],
+    "frameworks": [],
+    "topics": [
+      "evidence",
+      "uncertainty",
+      "validation"
+    ],
+    "cwes": [],
+    "path": "methodology/evidence-and-uncertainty.md",
+    "useWhen": "证据来自不同文件、存在规则命中、源码不足或准备移交 Validator 时。"
+  },
+  {
+    "id": "javascript-typescript",
+    "title": "JavaScript 与 TypeScript 审计语义",
+    "summary": "核对运行时类型、对象属性、模块绑定及异步分支。",
+    "category": "languages",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [],
+    "topics": [
+      "object-model",
+      "runtime-validation",
+      "imports",
+      "promises"
+    ],
+    "cwes": [],
+    "path": "languages/javascript-typescript.md",
+    "useWhen": "遇到类型断言、动态派发、解构、深合并或 Promise 管理的控制时。"
+  },
+  {
+    "id": "nodejs-runtime",
+    "title": "Node.js 运行时的进程、文件与网络边界",
+    "summary": "检查运行参数、文件对象、资源生命周期及不同部署环境。",
+    "category": "languages",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "nodejs"
+    ],
+    "topics": [
+      "process",
+      "filesystem",
+      "network",
+      "async"
+    ],
+    "cwes": [],
+    "path": "languages/nodejs-runtime.md",
+    "useWhen": "任务涉及 Node 进程、文件 I/O、出站访问、并发或日志时。"
+  },
+  {
+    "id": "wechat-miniapp",
+    "title": "微信小程序页面、会话与 WebView",
+    "summary": "核对页面事件到应用后端的边界、各通道会话和本地数据。",
+    "category": "frameworks",
+    "languages": [
+      "javascript",
+      "typescript",
+      "wxml"
+    ],
+    "frameworks": [
+      "wechat-miniapp"
+    ],
+    "topics": [
+      "authentication",
+      "session",
+      "webview",
+      "storage"
+    ],
+    "cwes": [],
+    "path": "frameworks/wechat-miniapp.md",
+    "useWhen": "任务涉及 app.json、WXML、wx.login、wx.request、本地存储或 web-view 时。"
+  },
+  {
+    "id": "wechat-cloud-development",
+    "title": "微信云开发的函数身份与数据权限",
+    "summary": "区分云函数调用校验、业务角色和客户端或服务端数据库权限。",
+    "category": "frameworks",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "wechat-miniapp",
+      "cloudbase"
+    ],
+    "topics": [
+      "cloud-functions",
+      "database",
+      "identity",
+      "authorization"
+    ],
+    "cwes": [],
+    "path": "frameworks/wechat-cloud-development.md",
+    "useWhen": "涉及云函数 exports.main、action、getWXContext 或云数据库时。"
+  },
+  {
+    "id": "express-routing",
+    "title": "Express 路由、中间件与错误路径",
+    "summary": "对照实际挂载顺序确认哪些请求经过认证、授权和解析。",
+    "category": "frameworks",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "express",
+      "nodejs"
+    ],
+    "topics": [
+      "routing",
+      "middleware",
+      "authorization",
+      "errors"
+    ],
+    "cwes": [],
+    "path": "frameworks/express-routing.md",
+    "useWhen": "索引或源码显示 Express app、Router、中间件、统一错误处理时。"
+  },
+  {
+    "id": "authentication-session",
+    "title": "身份认证与会话",
+    "summary": "验证凭据、主体绑定、过期及会话撤销的实际执行路径。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "express",
+      "nodejs",
+      "wechat-miniapp",
+      "cloudbase"
+    ],
+    "topics": [
+      "authentication",
+      "session",
+      "jwt"
+    ],
+    "cwes": [
+      "CWE-287",
+      "CWE-384",
+      "CWE-613"
+    ],
+    "path": "vulnerabilities/authentication-session.md",
+    "useWhen": "任务涉及登录、鉴权中间件、Token、Cookie、跨通道会话或退出。"
+  },
+  {
+    "id": "object-authorization",
+    "title": "对象级、角色级与租户授权",
+    "summary": "用主体、资源、动作与适用策略核对访问控制及 IDOR。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "express",
+      "nodejs",
+      "wechat-miniapp",
+      "cloudbase"
+    ],
+    "topics": [
+      "authorization",
+      "idor",
+      "ownership",
+      "tenant"
+    ],
+    "cwes": [
+      "CWE-862",
+      "CWE-863",
+      "CWE-639"
+    ],
+    "path": "vulnerabilities/object-authorization.md",
+    "useWhen": "读取、修改、删除、批量处理或导出使用外部资源 ID 时。"
+  },
+  {
+    "id": "sql-injection",
+    "title": "SQL 注入的查询结构与参数绑定",
+    "summary": "区分 SQL 模板、值参数和动态标识符，确认驱动实际消费的形式。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "nodejs"
+    ],
+    "topics": [
+      "sql",
+      "injection",
+      "parameterization"
+    ],
+    "cwes": [
+      "CWE-89"
+    ],
+    "path": "vulnerabilities/sql-injection.md",
+    "useWhen": "任务涉及 SQL 查询、原生查询、ORM raw 或可配置排序筛选时。"
+  },
+  {
+    "id": "nosql-injection",
+    "title": "NoSQL 查询对象与操作符边界",
+    "summary": "区分客户端值与查询对象的形状、操作符和更新语义。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "nodejs",
+      "cloudbase"
+    ],
+    "topics": [
+      "nosql",
+      "database",
+      "operator-validation"
+    ],
+    "cwes": [
+      "CWE-943"
+    ],
+    "path": "vulnerabilities/nosql-injection.md",
+    "useWhen": "MongoDB、云数据库或其他文档查询使用外部对象、动态过滤或更新字段时。"
+  },
+  {
+    "id": "command-execution",
+    "title": "命令与进程参数完整性",
+    "summary": "核对进程创建 API、shell 选项、参数和目标程序的解释边界。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "nodejs"
+    ],
+    "topics": [
+      "command",
+      "injection",
+      "process"
+    ],
+    "cwes": [
+      "CWE-78",
+      "CWE-88"
+    ],
+    "path": "vulnerabilities/command-execution.md",
+    "useWhen": "源码出现 child_process 或包装器，且入参来自任务设置、请求或资源元数据。"
+  },
+  {
+    "id": "ssrf",
+    "title": "服务端出站请求与目的地约束",
+    "summary": "核对目的地的业务权威、URL 解析、跳转和网络策略。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "express",
+      "nodejs"
+    ],
+    "topics": [
+      "ssrf",
+      "network",
+      "destinations"
+    ],
+    "cwes": [
+      "CWE-918"
+    ],
+    "path": "vulnerabilities/ssrf.md",
+    "useWhen": "服务端处理器、代理、Webhook、预览或下载任务会访问变动 URL 时。"
+  },
+  {
+    "id": "xss",
+    "title": "XSS 与输出语境",
+    "summary": "区分文本、HTML、属性、URL 和脚本语境，核对实际渲染点。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "express",
+      "wechat-miniapp"
+    ],
+    "topics": [
+      "xss",
+      "rendering",
+      "encoding",
+      "html"
+    ],
+    "cwes": [
+      "CWE-79"
+    ],
+    "path": "vulnerabilities/xss.md",
+    "useWhen": "任务涉及模板、DOM、富文本、HTML 响应或小程序 WebView 页面。"
+  },
+  {
+    "id": "path-traversal",
+    "title": "路径穿越、受限目录与文件对象",
+    "summary": "识别路径控制是否约束实际打开、写入、删除或解包的对象。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "nodejs",
+      "cloudbase"
+    ],
+    "topics": [
+      "path-traversal",
+      "filesystem",
+      "containment"
+    ],
+    "cwes": [
+      "CWE-22",
+      "CWE-59"
+    ],
+    "path": "vulnerabilities/path-traversal.md",
+    "useWhen": "文件处理、下载、模板、归档或对象存储使用外部路径或文件标识时。"
+  },
+  {
+    "id": "file-upload",
+    "title": "文件上传、存储与消费边界",
+    "summary": "核对上传权限、内容与体积限制、存储公开范围和后续消费者。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "nodejs",
+      "cloudbase",
+      "wechat-miniapp"
+    ],
+    "topics": [
+      "upload",
+      "storage",
+      "file-types"
+    ],
+    "cwes": [
+      "CWE-434"
+    ],
+    "path": "vulnerabilities/file-upload.md",
+    "useWhen": "涉及 multipart、云存储、附件、头像、归档或文件预览时。"
+  },
+  {
+    "id": "deserialization",
+    "title": "反序列化、对象重建与动态解释",
+    "summary": "判断解析后的值何时具有可执行语义或未经授权的对象能力。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "nodejs"
+    ],
+    "topics": [
+      "serialization",
+      "object-model",
+      "runtime-validation"
+    ],
+    "cwes": [
+      "CWE-502",
+      "CWE-95"
+    ],
+    "path": "vulnerabilities/deserialization.md",
+    "useWhen": "涉及序列化库、自定义还原器、持久化对象或跨系统消息。"
+  },
+  {
+    "id": "sensitive-disclosure",
+    "title": "敏感信息暴露与硬编码凭据",
+    "summary": "追踪实际敏感值、暴露范围和当前消费者，区分配置键、占位符和有效凭据。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "nodejs",
+      "wechat-miniapp",
+      "cloudbase",
+      "express"
+    ],
+    "topics": [
+      "secrets",
+      "privacy",
+      "logging",
+      "disclosure"
+    ],
+    "cwes": [
+      "CWE-200",
+      "CWE-532",
+      "CWE-798"
+    ],
+    "path": "vulnerabilities/sensitive-disclosure.md",
+    "useWhen": "任务涉及日志、异常、响应映射、构建常量、源代码中的凭据或客户端缓存。"
+  },
+  {
+    "id": "prototype-pollution",
+    "title": "原型污染、字典属性与安全决策",
+    "summary": "检查动态属性或合并是否能改变原型相关状态，并影响被消费的安全属性。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "nodejs"
+    ],
+    "topics": [
+      "prototype-pollution",
+      "object-model",
+      "merge"
+    ],
+    "cwes": [
+      "CWE-1321",
+      "CWE-915"
+    ],
+    "path": "vulnerabilities/prototype-pollution.md",
+    "useWhen": "存在深合并、动态对象路径、配置选项或根据继承值作权限判断时。"
+  },
+  {
+    "id": "open-redirect",
+    "title": "重定向与网页导航目的地",
+    "summary": "核对外部值对真正导航位置和认证返回目标的影响。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "express",
+      "wechat-miniapp"
+    ],
+    "topics": [
+      "redirect",
+      "navigation",
+      "webview"
+    ],
+    "cwes": [
+      "CWE-601"
+    ],
+    "path": "vulnerabilities/open-redirect.md",
+    "useWhen": "接口生成 Location，接受 returnTo，或小程序网页跳转依赖外部参数。"
+  },
+  {
+    "id": "cryptography",
+    "title": "密码学用途、完整性与密钥管理",
+    "summary": "以实际保护目标审查算法、会话随机性、密钥和验证的消费路径。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "nodejs"
+    ],
+    "topics": [
+      "cryptography",
+      "signatures",
+      "keys"
+    ],
+    "cwes": [
+      "CWE-327",
+      "CWE-330",
+      "CWE-321"
+    ],
+    "path": "vulnerabilities/cryptography.md",
+    "useWhen": "涉及口令、签名、加密存储、Token、随机数或密钥生命周期时。"
+  },
+  {
+    "id": "race-toctou",
+    "title": "竞争条件与检查到使用不一致",
+    "summary": "按共享状态、原子性和事务边界审查多次操作之间的一致性。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "nodejs",
+      "cloudbase"
+    ],
+    "topics": [
+      "concurrency",
+      "toctou",
+      "atomicity"
+    ],
+    "cwes": [
+      "CWE-362",
+      "CWE-367"
+    ],
+    "path": "vulnerabilities/race-toctou.md",
+    "useWhen": "任务涉及异步更新、文件检查后使用、任务重试、计数或资金状态转换。"
+  },
+  {
+    "id": "business-invariants",
+    "title": "业务逻辑、状态机与幂等性",
+    "summary": "提取任务相关的业务前置条件、受保护状态和提交约束。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [],
+    "topics": [
+      "business-invariants",
+      "state-machine",
+      "idempotency"
+    ],
+    "cwes": [
+      "CWE-840",
+      "CWE-841"
+    ],
+    "path": "vulnerabilities/business-invariants.md",
+    "useWhen": "存在多步骤业务、审批、库存、优惠、计数、批处理或恢复流程。"
+  },
+  {
+    "id": "payment-order",
+    "title": "订单、支付、价格与通知一致性",
+    "summary": "确认金额、订单归属、支付状态和幂等写入各自的权威依据。",
+    "category": "vulnerabilities",
+    "languages": [
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "wechat-miniapp",
+      "cloudbase",
+      "nodejs"
+    ],
+    "topics": [
+      "payment",
+      "order",
+      "price",
+      "state-machine"
+    ],
+    "cwes": [
+      "CWE-841",
+      "CWE-345"
+    ],
+    "path": "vulnerabilities/payment-order.md",
+    "useWhen": "任务涉及下单、价格、支付、第三方通知、退款或积分流水时。"
+  }
+]
