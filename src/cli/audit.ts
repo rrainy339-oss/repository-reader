@@ -9,7 +9,7 @@ const help = `Usage: npm run --silent audit -- --repo <directory> [--state <file
 Options:
   --repo <directory>            Local source checkout to review.
   --state <file>                Optional goal hints. Each run starts a fresh queue.
-  --goal <text>                 Optional Repository overview instruction.
+  --goal <text>                 Optional audit objective and scope.
   --context <file>              Optional business rules, with documented provenance.
   --provider <name>             openai, anthropic, minimax, or minimax-cn. Default: openai.
   --max-subagent-calls <number>  Optional subagent dispatch ceiling.

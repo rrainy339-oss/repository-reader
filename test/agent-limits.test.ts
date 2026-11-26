@@ -111,7 +111,7 @@ test('Main carries a new source target and goal into Detection and can validate 
     reply({ actions: [{ kind: 'create_task', target: { kind: 'file', source },
       goal: { title: 'Initial state', description: requirement },
       question: 'What state does the first record use?', expectedEvidence: ['Read initial state.'], reason: 'State is explicit.' }] }),
-    call('run_detection', { taskId: 'task-1' }),
+    call('run_task_batch', { taskIds: ['task-1'] }),
     call('read_lines', source),
     reply({ assessment: { status: 'suspected_violation', summary: 'The implementation uses ready.' },
       evidence: [{ id: 'state', source, observation: 'Initial value uses ready.' }],
@@ -119,7 +119,9 @@ test('Main carries a new source target and goal into Detection and can validate 
       candidates: Array.from({ length: 10 }, (_, index) => ({
         claim: 'Review initial state ' + (index + 1), rule: requirement, evidenceIds: ['state'],
       })), leads: [], unresolved: [] }),
-    call('run_validator', { taskId: 'task-1', candidateIndex: 10 }),
+    ...Array.from({ length: 9 }, () => [call('read_lines', source),
+      reply({ verdict: 'refuted', summary: 'The checked concern is refuted.', scope: 'Creation source',
+        evidence: [{ id: 'value', source, observation: 'Read the initialization.' }], decisionEvidenceIds: ['value'] })]).flat(),
     call('read_lines', source),
     reply({ verdict: 'supported', summary: 'The source uses ready and the specification requires draft.', scope: 'Creation source',
       evidence: [{ id: 'value', source, observation: 'The initial state is ready.' }], decisionEvidenceIds: ['value'], ruleIds: ['initial'] }),
@@ -136,7 +138,8 @@ test('Main carries a new source target and goal into Detection and can validate 
   assert.equal(action.goalId, result.goals[0].id);
   assert.equal(attempts[0].detection.target?.id, action.targetId);
   assert.equal(attempts[0].detection.candidates.length, 10);
-  assert.equal(attempts[0].validations[0].candidateIndex, 10);
+  assert.equal(attempts[0].validations.length, 10);
+  assert.equal(attempts[0].validations[9].candidateIndex, 10);
   assert.equal(result.findings.length, 1);
   assert.equal(result.budget.modelCalls, faux.state.callCount);
 });

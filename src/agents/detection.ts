@@ -31,6 +31,9 @@ export const detectionTaskSchema = z.object({
 export const detectionContextSchema = z.object({
   businessRules: z.array(text).default([]),
   followUp: z.array(text).default([]),
+  previousInvestigation: z.object({ summary: text, evidence: z.array(z.object({
+    source: savedSourceRangeSchema, observation: text,
+  })), requests: z.array(z.object({ claim: text, questions: z.array(text) })) }).optional(),
 });
 
 export type DetectionRequest = SessionRequest & {
@@ -46,6 +49,22 @@ export const candidateSchema = z.object({ claim: text, rule: text, evidenceIds: 
 
 const draftEvidenceSchema = z.object({ id: text, source: sourceRangeSchema, observation: text });
 export const detectionEvidenceSchema = draftEvidenceSchema.extend({ source: savedSourceRangeSchema });
+export const reviewLeadSchema = z.object({ question: text, reason: text, evidenceIds: evidenceIds.min(1),
+  kind: z.enum(['discovery_lead', 'repository_context', 'coverage_gap']).optional() });
+
+export function groundReviewLeads(taskId: string, leads: z.output<typeof reviewLeadSchema>[],
+  evidence: { id: string; source: SourceLines }[]) {
+  const byId = new Map(evidence.map(({ id, source }) => [id, source]));
+  return leads.flatMap((lead) => {
+    if (!lead.evidenceIds.every((id) => byId.has(id))) return [];
+    const cited = new Map(lead.evidenceIds.map((id) => {
+      const source = byId.get(id)!;
+      return [JSON.stringify([source.path, source.startLine, source.endLine, source.sha256]), source];
+    }));
+    const id = stableId('lead', [taskId, lead.kind, lead.question, [...cited.keys()].sort()]);
+    return [{ ...lead, id, sourceTaskId: taskId, evidence: [...cited.values()] }];
+  });
+}
 
 const draftSchema = z.object({
   assessment: z.object({ status: z.enum(['suspected_violation', 'no_issue_observed', 'inconclusive', 'blocked']),
@@ -54,7 +73,7 @@ const draftSchema = z.object({
   checks: z.array(z.object({ index: z.number().int().positive(), status: z.enum(['addressed', 'unresolved']),
     note: text, evidenceIds: evidenceIds.default([]) })),
   candidates: z.array(candidateSchema),
-  leads: z.array(z.object({ question: text, reason: text, evidenceIds: evidenceIds.min(1) })),
+  leads: z.array(reviewLeadSchema),
   unresolved: z.array(text),
 });
 
@@ -64,6 +83,7 @@ Use list_detection_knowledge and read_detection_knowledge when a methodology, we
 Return one JSON object with assessment {status,summary}, evidence, checks, candidates, leads, and unresolved (an array of short concrete gaps). Use the task's language. Assessment status is suspected_violation, no_issue_observed (scoped to reviewed source), inconclusive, or blocked.
 Each evidence item is {id,source:{path,startLine,endLine},observation}. Cite ranges actually read in this run through read_lines or get_symbol_code. Each check is {index,status,note,evidenceIds}, where index is 1-based from expectedEvidence, status is addressed or unresolved. Addressed requires source evidence.
 Each candidate is {claim,rule,evidenceIds,counterevidenceIds,openQuestions}. Describe a suspected mismatch with an applicable requirement for independent source review; separate assumptions from observations. Each lead is {question,reason,evidenceIds}. Candidates and leads may be empty. Finish when the question is answered or explain the evidence gaps.`;
+const followUpInstructions = `For a supplied follow-up, use the previous investigation as context. Re-read the relevant source and cite any new facts bearing on the named candidate. Preserve the claim and rule wording when the hypothesis is unchanged, and cite evidence that supports or challenges it. Use lead kind discovery_lead for an independent question, repository_context for missing repository-level understanding, or coverage_gap for a separate uncovered area with a source reference.`;
 
 export async function detectTask(request: DetectionRequest, models: Models, model: Model<Api>) {
   const { budget, signal } = sessionBudget(request);
@@ -87,7 +107,7 @@ export async function detectTask(request: DetectionRequest, models: Models, mode
   tools.push(...createDetectionKnowledgeTools());
   const { targetId, goalId, question, expectedEvidence, reason } = task;
   const taskId = task.taskId ?? `task-${createHash('sha256').update(JSON.stringify([targetId, goalId])).digest('hex').slice(0, 16)}`;
-  const { draft, run } = await runStructuredAgent({ models, model, systemPrompt, tools, schema: draftSchema,
+  const { draft, run } = await runStructuredAgent({ models, model, systemPrompt: systemPrompt + '\n' + followUpInstructions, tools, schema: draftSchema,
     resultName: 'Detection result', maxToolCalls: request.maxToolCalls, runBudget: budget, signal,
     input: { taskId, targetId, goalId, question, reason, targetAnchor: target?.anchor, target: task.target, goal: task.goal,
       expectedEvidence: expectedEvidence.map((requirement, index) => ({ index: index + 1, requirement })),
@@ -127,19 +147,8 @@ export async function detectTask(request: DetectionRequest, models: Models, mode
     unresolved.push('A candidate was withheld because its evidence references could not be established.');
     return false;
   });
-  const evidenceById = new Map(evidence.map(({ id, source }) => [id, source]));
-  const leads = draft.leads.flatMap((lead) => {
-    if (!hasVerifiedEvidence(lead.evidenceIds)) {
-      unresolved.push('A related lead was withheld because it had no verified source references.');
-      return [];
-    }
-    const cited = new Map(lead.evidenceIds.map((id) => {
-      const source = evidenceById.get(id)!;
-      return [JSON.stringify([source.path, source.startLine, source.endLine, source.sha256]), source];
-    }));
-    const id = stableId('lead', [taskId, lead.question, lead.reason, [...cited.keys()].sort()]);
-    return [{ ...lead, id, sourceTaskId: taskId, evidence: [...cited.values()] }];
-  });
+  const leads = groundReviewLeads(taskId, draft.leads, evidence);
+  if (leads.length < draft.leads.length) unresolved.push('A related lead was withheld because it had no verified source references.');
 
   let assessment = draft.assessment;
   if (candidates.length) {

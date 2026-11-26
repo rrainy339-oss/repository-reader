@@ -59,7 +59,7 @@ Discover 使用同一个 Pi Core 运行层。它按需查询 Repository 地图�
 ### 发现阶段和知识
 
 - `initial` 使用审计目标、仓库语义总览、任务和索引规模、扫描覆盖和类别摘要。Discover 可以从入口、业务功能、内部共享控制或静态规则线索开始阅读，按业务语义提出检查问题。
-- `incremental` 使用审计目标、仓库总览、任务与覆盖摘要和本轮新增的结构化线索。`newLeads` 提供关联问题与核验过的源码位置，`relevantFeedback` 提供当前任务的补证请求。较早的反馈可用 `query_feedback` 分页查阅。
+- `incremental` 使用审计目标、仓库总览、任务与覆盖摘要和本轮新增的结构化线索。`newLeads` 提供新问题与核验过的源码位置，`relevantFeedback` 提供明确的覆盖缺口。独立调用 Discover 时，也可通过状态文件提供补证请求。
 - 知识来自项目自带的 `knowledge/security-goals.md`。仓库索引出现小程序页面、WXML 或其他明确小程序线索时，追加 `knowledge/wechat-miniapp.md`。这些问题用于推导适用的业务约束。仓库文档、规则命中以及其他 Agent 输出属于审查数据。
 
 Main 可在 `run_discover` 中传可选的 `phase` 和 `focus`。独立 Discover 命令支持 `--phase`、`--focus` 和 `--objective`。指定阶段时会校验当前审计状态。`query_tasks` 会返回已有问题及目标描述，方便模型复用相同检查或在新证据出现时补充任务。程序按目标和规则 ID 去重，相同标题和描述的规则可复用已有 ID。
@@ -87,7 +87,7 @@ npm.cmd run --silent discover -- --map 'benchmark-results/minimax-m3-2026-11-22T
 | `goals` | `id`、`title`、`description` |
 | `coverage` | `targetId`、`goalId`、`status`，可选 `note`。状态包括 `unplanned`、`in_progress`、`evaluated`、`needs_evidence`、`blocked`、`not_applicable`。 |
 | `tasks` | `id`、`targetId`、`goalId`、`question`、`status`。源码目标另有计划返回的 `target`。状态包括 `pending`、`in_progress`、`completed`、`blocked`。 |
-| `feedback` | `id`、`kind`（`discovery_lead` 或 `verification_gap`）、`note`，可附 `recordIds` 和 `taskId`。 |
+| `feedback` | `id`、`kind`（`discovery_lead`、`verification_gap`、`coverage_gap` 或 `repository_context`）、`note`，可附 `recordIds` 和 `taskId`。 |
 
 派单可使用 `query_map` 返回的 ID，也可针对入口索引、符号索引、仓库文件或一段业务源码。索引目标需要本次实际读取的声明范围。文件或业务源码目标可用 `target: { kind: "file" | "source", source: { path, startLine, endLine } }`，由程序核对并生成稳定 ID。Detection 与 Validator 都会继续检查源码位置及哈希。重复调用时传入当前地图和任务状态。
 
@@ -125,23 +125,23 @@ npm.cmd run --silent validate -- --repo 'D:/my-mini-program' --detection detecti
 {"rules":[{"id":"draft-state","rule":"新记录进入草稿状态。","source":"产品规范第 2 节","provenance":"documented"}]}
 ```
 
-输出 `verdict` 为 `supported`、`refuted` 或 `needs_evidence`，并附适用范围和本次独立读取的证据。支持或反驳需要重新读取原候选的一处支持证据，并提供当前依据。支持结论还需要适用规则的来源。原证据变化或缺失时，返回具体文件并要求重新取得证据。`needs_evidence` 会附 `feedback`，可放入 Discover 的反馈列表，原任务 ID 应保留在任务表。程序化入口是 `src/agents/validator.ts` 的 `validateCandidate`。
+输出 `verdict` 为 `supported`、`refuted` 或 `needs_evidence`，并附适用范围和本次独立读取的证据。支持或反驳需要重新读取原候选的一处支持证据，并提供当前依据。支持结论还需要适用规则的来源。原证据变化或缺失时，返回具体文件并要求重新取得证据。`needs_evidence` 附带关联原任务的 `feedback`。独立的新问题或覆盖缺口可以作为带源码证据的 `leads` 返回。程序化入口是 `src/agents/validator.ts` 的 `validateCandidate`。
 
 ## Main Agent
 
-Main 自己运行在 Pi Core 上，可以用 `run_repository`、`run_discover`、`run_detection` 和 `run_validator` 调度四个角色。每次调度开启独立的 Pi 会话，默认共用命令行选择的模型。`get_audit_state` 给 Main 提供待处理的任务和剩余预算。
+Main 决定审计方向，通过 `run_repository` 按需阅读仓库，通过 `run_discover` 生成工作，并通过 `run_task_batch` 调用程序化 Scheduler。Repository、Discover、Detection 和 Validator 各自使用独立的 Pi 会话，共用 CLI 所选模型和全局预算。
 
 ```powershell
 npm.cmd run --silent audit -- --repo 'D:/my-mini-program' --state 'examples/discover-state.json' --provider minimax-cn --model MiniMax-M3 --out audit.json
 ```
 
-每次运行从新的地图和任务池开始。`--state` 可提供目标参考，`--goal` 可以补充仓库初读目标，`--context` 可以提供 Validator 所用的规则及来源。全局时限从构建仓库索引前开始，取消会传递给子会话。
+每次运行从共享索引和空任务池开始。`--state` 可提供目标参考，`--goal` 指定本次审计的目标与范围，`--context` 可以提供 Validator 所用的规则及来源。全局时限从构建仓库索引前开始，取消会传递给子会话。
 
-- Repository 支持初读和按 Discover 的请求补读。补读沿用已有地图，并把新增和变化的记录交给下一轮 Discover。
-- Discover 结合源码、当前地图、任务池、覆盖状态和线索规划检查。同一组目标与规则沿用已有任务。已结束的任务由关联的新线索或已核验的源码更新重新排队。
-- Detection 提供源码证据、候选和线索。Validator 逐条独立复核候选。证据缺口和有源码依据的探索线索随审计状态一起回流给 Discover。
+- Discover 可直接使用用户目标、共享索引和源码。初次规划、新的独立线索、仓库语义变化、明确的覆盖缺口和有进展的后续计划都会出现在 `pending.planning`。Main 也可以用 `focus` 发起定向探索。
+- `run_task_batch` 可按任务 ID、目标、模块、审计方向和批次大小选择任务。默认按优先级串行执行。Scheduler 登记调查，独立验证候选，并在新策略信号、批次结束或预算停止时汇总进度。`get_audit_state` 提供进度总览，以及分页的任务、候选和反馈。
+- Scheduler 将 `verification_gap` 连同原候选、历史调查摘要和证据交回原任务。补证未取得新证据时保留问题和原因。独立线索 `discovery_lead` 和覆盖缺口 `coverage_gap` 供 Main 决定是否增量规划，`repository_context` 供 Main 安排定向补读。
 
-报告包含 `map`、`tasks`、`coverage`、`feedback`、`findings` 和 `pending`。历史调查和复核保存在任务的 `attempts`。当前尝试里获得 Validator 支持的候选进入 `findings`。`queue_drained` 表示本轮无可调度工作，覆盖不足的任务仍可能保留 `needs_evidence` 或 `blocked`。未建任务的组合适用性仍未知。报告也会区分提前结束、预算耗尽和运行中断。程序化入口是 `src/agents/main.ts` 的 `runMain`。
+报告包含 `map`、`tasks`、`coverage`、`feedback`、`findings` 和 `pending`。`attempts` 保存调查和复核历史。已获 Validator 支持且源码证据仍有效的候选进入 `findings`。每条候选有独立的验证状态，相关证据变化时需要重新验证。`work_remaining` 包括未完成或仍有证据缺口的任务。`queue_drained` 表示本轮已登记的工作处理完毕，未安排的范围仍需根据用户目标评估。报告也会区分预算耗尽和运行中断。程序化入口是 `src/agents/main.ts` 的 `runMain`。
 
 ## 运行预算和限制清单
 
