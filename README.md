@@ -91,7 +91,7 @@ npm.cmd run --silent discover -- --map 'benchmark-results/minimax-m3-2026-11-22T
 
 派单可使用 `query_map` 返回的 ID，也可针对入口索引、符号索引、仓库文件或一段业务源码。索引目标需要本次实际读取的声明范围。文件或业务源码目标可用 `target: { kind: "file" | "source", source: { path, startLine, endLine } }`，由程序核对并生成稳定 ID。Detection 与 Validator 都会继续检查源码位置及哈希。重复调用时传入当前地图和任务状态。
 
-输出 `actions` 含 `create_task`、`supplement_task` 或 `request_repository_read`。同一入口与安全目标已有任务时，新的检查内容可以转为补充建议。同轮范围相同的重复提议会合并来源。宿主从输入地图附上已有源码引用，在 `discarded` 给出被拒建议的原因。`feedbackOutcomes` 逐条说明反馈的处置理由、已有覆盖或剩余问题。Main 核对提议是否实际入队，以及已引用的任务是否与反馈源码关联。留有缺口的反馈进入未解决列表，等待 Main 定向重访。`run` 记录用量与查询工具。程序化入口是 `src/agents/discover.ts` 的 `discoverTasks`。
+输出 `actions` 含 `create_task`、`supplement_task` 或 `request_repository_read`。同一入口与安全目标已有任务时，新的检查内容可以转为补充建议。同轮范围相同的重复提议会合并来源。宿主从输入地图附上已有源码引用，在 `discarded` 给出被拒建议的原因。`feedbackOutcomes` 逐条说明反馈的处置理由、已有覆盖或剩余问题。Main 核对实际入队结果。认定已有覆盖时，任务须关联当前源码，且已有问题、证据要求或目标须明确包含要关闭的问题。认定不适用时须提供具体理由和本轮核验的源码引用。未决反馈保留供 Main 定向重访。`run` 记录用量与查询工具。程序化入口是 `src/agents/discover.ts` 的 `discoverTasks`。
 
 ## Detection Agent
 
@@ -111,7 +111,7 @@ npm.cmd run --silent detect -- --repo 'D:/my-mini-program' --task plan.json --ac
 
 输出包括调查结论 `assessment`、经核对的 `evidence`、逐项检查 `checks`、供独立复核的 `candidates`、可交给 Discover 的 `leads` 和缺失信息 `unresolved`。`coverageProposal` 交给调用方决定是否应用。候选仍需复核，只有逐项证据齐备且结论为「已查范围内未见问题」时才建议记为 `evaluated`。模型提供商接收本次任务上下文与源码片段。
 
-定向补证时，Detection 收到原任务、候选 ID、此前的摘要和证据，以及带 ID 的补证问题。`supplementResults` 对应具体请求，记录结论、源码引用和不确定性。已读范围可以支持新的分析，但必须在补证会话中重新读取。修订候选时用 `priorCandidateId` 关联原记录。
+定向补证时，Detection 收到原任务、候选 ID、此前的摘要和证据，以及补证请求和它的历史尝试。`supplementResults` 对应具体请求，记录结论、源码引用和不确定性。已读范围可以支持新的分析，但必须在补证会话中重新读取。修订候选时用 `priorCandidateId` 关联原记录。补证期间新发现的独立候选同样进入复核。无法关联的修订在调查历史中记录原因，已登记的候选仍按原证据复核。
 
 ## Validator Agent
 
@@ -141,7 +141,8 @@ npm.cmd run --silent audit -- --repo 'D:/my-mini-program' --state 'examples/disc
 
 - Discover 可直接使用用户目标、共享索引和源码。初次规划、新的独立线索、仓库语义变化、明确的覆盖缺口和有进展的后续计划都会出现在 `pending.planning`。未解决的线索仍可查询，等待 Main 决定是否带着具体方向重访。
 - `run_task_batch` 可按任务 ID、目标、模块、审计方向、优先级和批次大小选择任务。初次派发默认按优先级。一个任务完成当轮调查和候选复核后，需补证的工作排到所选任务的队尾。新策略信号、批次结束或预算停止时返回阶段进度。`get_audit_state` 提供总览和分页详情。
-- `run_repository` 将补读请求和 `repository_context` 分别按 ID 交给 Reader。报告分别记录读取是否完成、问题是否得到有源码证据的回答。未回答的问题可按原 ID 定向重试。
+- `run_repository` 将补读请求和 `repository_context` 分别按 ID 交给 Reader。带源码证据的回答会回流原任务，并在确实阻碍原调查或候选复核时安排继续调查。未完整回答的问题可按原 ID 定向重试。
+- 补证进展按请求 ID 记录。Validator 可为仍未解决的问题提供新的、独立读取的调查依据，使同一个请求继续验证。独立确认的回答可消解文字明确对应的覆盖缺口，原始调查历史和其他未决问题继续保留。
 
 报告包含 `map`、`tasks`、`coverage`、`feedback`、`findings` 和 `pending`。`attempts` 保存调查和复核历史。已获 Validator 支持且源码证据仍有效的候选进入 `findings`。`pending` 保留未解决的线索、业务问题和补证请求，`work_remaining` 在队列为空但这些问题仍有未决项时同样适用。`queue_drained` 只描述本轮工作，整体仓库覆盖范围仍是 `unknown`。预算耗尽和运行中断会通过 `status` 与 `stopReason` 明示。程序化入口是 `src/agents/main.ts` 的 `runMain`。
 

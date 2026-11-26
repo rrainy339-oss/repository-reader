@@ -16,18 +16,21 @@ type Feedback = State['feedback'][number] & {
   resolutionReason?: string;
   resolutionEvidence?: SourceLines[];
   workIds?: string[];
+  blocking?: boolean;
+  appliedAnswerIds?: string[];
+  supplementHistory?: { attempt: number; verification: 'pending' | 'verified' | 'unresolved' | 'skipped' }[];
 };
 type Action = Awaited<ReturnType<typeof discoverTasks>>['actions'][number];
 type Detection = Awaited<ReturnType<typeof detectTask>>;
 type Validation = Awaited<ReturnType<typeof validateCandidate>>;
-type Attempt = { detection: Detection; validations: Validation[]; supplementRequestIds?: string[] };
+type Attempt = { detection: Detection; validations: Validation[]; supplementRequestIds?: string[];
+  candidateLinkIssues?: { candidateIndex: number; priorCandidateId: string; reason: string }[] };
 type Supplements = NonNullable<ValidationRequest['supplements']>;
 type Candidate = {
   id: string;
   attempt: Attempt;
   index: number;
   signature: string;
-  seenConclusions: Set<string>;
   supplementReview?: { attempt: Attempt; answers: Supplements };
   status: 'pending' | Validation['verdict'] | 'blocked' | 'stale';
   validation?: Validation;
@@ -51,6 +54,9 @@ type BatchSelector = { taskIds?: string[]; targetId?: string; module?: string; g
 const normalize = (text: string) => text.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
 const citationKey = ({ path, startLine, endLine, sha256 }: SourceLines) => JSON.stringify([path, startLine, endLine, sha256]);
 const overlaps = (a: SourceLines, b: SourceLines) => a.path === b.path && a.startLine <= b.endLine && b.startLine <= a.endLine;
+const introducesSource = (sources: SourceLines[], known: SourceLines[]) => sources.some((source) => !known.some((prior) =>
+  prior.path === source.path && prior.sha256 === source.sha256 && prior.startLine <= source.startLine && prior.endLine >= source.endLine));
+const conclusionKey = (text: string) => normalize(text).replace(/[。.!?！？]+$/u, '').trim();
 const pendingCandidates = (task: AuditTask) => task.candidates.filter(({ status }) => status === 'pending');
 const priorityOrder = { high: 0, normal: 1, low: 2 };
 
@@ -109,7 +115,7 @@ export function createAuditScheduler({
     return task.id;
   }
 
-  function routeLeads(task: AuditTask, leads: Detection['leads']) {
+  function routeLeads(task: AuditTask, leads: Detection['leads'], candidateId?: string) {
     for (const lead of leads) {
       const kind = lead.kind ?? 'discovery_lead';
       const question = normalize(lead.question);
@@ -117,27 +123,59 @@ export function createAuditScheduler({
         (coverage === 'evaluated' || status === 'pending' || status === 'in_progress')
         && normalize(action.question) === question && action.evidence.some(({ citations }) =>
           citations.some((range) => lead.evidence.some((source) => overlaps(range, source)))))) continue;
-      const id = stableId('feedback', [kind, question, lead.evidence.map(citationKey).sort()]);
+      const scope = kind === 'repository_context' ? [task.id, candidateId] : lead.evidence.map(citationKey).sort();
+      const id = stableId('feedback', [kind, question, scope]);
       if (feedback.has(id)) continue;
       feedback.set(id, { id, kind, status: 'pending', taskId: task.id, question: lead.question,
-        reason: lead.reason, note: lead.question + '\n' + lead.reason, evidence: lead.evidence, recordIds: [task.action.targetId] });
+        reason: lead.reason, note: lead.question + '\n' + lead.reason, evidence: lead.evidence, recordIds: [task.action.targetId],
+        ...(kind === 'repository_context' ? { candidateId, blocking: lead.blocking } : {}) });
     }
   }
 
-  function routeEvidenceRequests(task: AuditTask, candidate: Candidate, validation: Validation) {
-    for (const note of validation.neededEvidence) {
-      const id = stableId('verification', [candidate.id, normalize(note)]);
-      const prior = feedback.get(id);
-      if (prior) {
-        if (prior.status === 'resolved') {
-          prior.status = 'unresolved';
-          prior.resolutionEvidence = undefined;
-          prior.reasonUnresolved = 'The current independent review raised the same question again.';
-        }
-        continue;
-      }
+  function priorSupplements(task: AuditTask, gap: Feedback) {
+    return (gap.supplementHistory ?? []).flatMap(({ attempt, verification }) => {
+      const result = task.attempts[attempt - 1].detection.supplementResults.find(({ requestId }) => requestId === gap.id);
+      return result ? [{ ...result, verification }] : [];
+    });
+  }
+
+  function queueEvidenceRequest(task: AuditTask, candidate: Candidate, note: string, evidence: SourceLines[]) {
+    const id = stableId('verification', [candidate.id, conclusionKey(note)]);
+    const prior = feedback.get(id);
+    if (!prior) {
       feedback.set(id, { id, kind: 'verification_gap', status: 'pending', taskId: task.id,
-        candidateId: candidate.id, note, recordIds: [task.action.targetId] });
+        candidateId: candidate.id, note, evidence, recordIds: [task.action.targetId] });
+      return;
+    }
+    const known = [...prior.evidence ?? [], ...priorSupplements(task, prior).flatMap(({ evidence }) => evidence.map(({ source }) => source))];
+    if (introducesSource(evidence, known)) {
+      prior.evidence = [...new Map([...prior.evidence ?? [], ...evidence].map((source) => [citationKey(source), source])).values()];
+      prior.status = 'pending';
+      prior.reasonUnresolved = undefined;
+      prior.resolutionEvidence = undefined;
+    } else if (prior.status === 'resolved') {
+      prior.status = 'unresolved';
+      prior.resolutionEvidence = undefined;
+      prior.reasonUnresolved = 'The current independent review raised the same question without new investigation evidence.';
+    }
+  }
+
+  function applyRepositoryAnswer(item: Feedback) {
+    const task = item.taskId && tasks.get(item.taskId);
+    const evidence = item.resolutionEvidence;
+    if (!task || !evidence?.length || !item.resolutionReason || item.status !== 'resolved' || item.blocking === false) return;
+    const key = stableId('answer', [conclusionKey(item.resolutionReason), evidence.map(citationKey).sort()]);
+    if (item.appliedAnswerIds?.includes(key)) return;
+    (item.appliedAnswerIds ??= []).push(key);
+    if (item.candidateId) {
+      const candidate = task.candidates.find(({ id }) => id === item.candidateId);
+      if (candidate && ['needs_evidence', 'blocked', 'stale'].includes(candidate.status)) {
+        queueEvidenceRequest(task, candidate, item.question ?? item.note, evidence);
+      }
+    } else if (task.status === 'blocked' || task.coverage === 'needs_evidence') {
+      task.status = 'pending';
+      task.coverage = 'needs_evidence';
+      task.reason = undefined;
     }
   }
 
@@ -146,13 +184,22 @@ export function createAuditScheduler({
       item.kind === 'verification_gap' && item.taskId === task.id && item.status === 'pending');
   }
 
-  function registerCandidates(task: AuditTask, attempt: Attempt) {
+  function registerCandidates(task: AuditTask, attempt: Attempt, revised: Set<number>) {
     const existing = new Set(task.candidates);
     for (const [offset] of attempt.detection.candidates.entries()) {
       const index = offset + 1;
+      if (revised.has(index)) continue;
       const input = candidateInput(attempt, index);
-      if (input.candidate.priorCandidateId) continue;
-      const matching = [...existing].find((item) => item.signature === input.signature) ??
+      const priorCandidateId = input.candidate.priorCandidateId;
+      if (priorCandidateId) {
+        const known = task.candidates.some(({ id }) => id === priorCandidateId);
+        const requested = attempt.supplementRequestIds?.some((id) => feedback.get(id)?.candidateId === priorCandidateId);
+        (attempt.candidateLinkIssues ??= []).push({ candidateIndex: index, priorCandidateId,
+          reason: !known ? 'The prior candidate ID is unknown to this task.'
+            : !requested ? 'This candidate has no active supplement request in the attempt.'
+            : 'No unique revision matched the rule, related evidence, and grounded supplement answer.' });
+      }
+      const matching = task.candidates.find((item) => item.signature === input.signature) ??
         [...existing].find((item) => {
           const prior = candidateInput(item.attempt, item.index);
           return prior.identity === input.identity && prior.supporting.some((range) => input.supporting.some((source) => overlaps(range, source)));
@@ -160,32 +207,40 @@ export function createAuditScheduler({
       if (!matching) {
         if (task.candidates.some((item) => item.attempt === attempt && item.signature === input.signature)) continue;
         task.candidates.push({ id: task.id + '-candidate-' + (task.candidates.length + 1), attempt, index,
-          signature: input.signature, seenConclusions: new Set(), status: 'pending' });
+          signature: input.signature, status: 'pending' });
         continue;
       }
       existing.delete(matching);
-      if (matching.signature === input.signature && matching.status !== 'stale') continue;
+      if (priorCandidateId || attempt.supplementRequestIds || (matching.signature === input.signature && matching.status !== 'stale')) continue;
       Object.assign(matching, { attempt, index, signature: input.signature, status: 'pending', validation: undefined, reason: undefined });
     }
   }
 
   function registerSupplements(task: AuditTask, attempt: Attempt, requests: Feedback[]) {
     const results = new Map(attempt.detection.supplementResults.map((result) => [result.requestId, result]));
+    const revised = new Set<number>();
     for (const item of task.candidates) {
       const answers: Supplements = [];
-      const conclusions = new Set<string>();
       for (const gap of requests.filter(({ candidateId }) => candidateId === item.id)) {
         const result = results.get(gap.id);
-        const key = result && normalize(result.conclusion).replace(/[。.!?！？]+$/u, '').trim();
-        if (!result || result.status === 'unresolved' || !key || item.seenConclusions.has(key)
+        const currentSources = result?.evidence.map(({ source }) => source) ?? [];
+        const previous = priorSupplements(task, gap).filter(({ verification }) => verification !== 'skipped');
+        const repeated = result && previous.some((prior) => conclusionKey(prior.conclusion) === conclusionKey(result.conclusion)
+          && !introducesSource(currentSources, prior.evidence.map(({ source }) => source))
+          && !(prior.status === 'partial' && result.status === 'resolved' && !result.uncertainties.length)
+          && !(result.uncertainties.length < prior.uncertainties.length && result.uncertainties.every((question) =>
+            prior.uncertainties.some((earlier) => conclusionKey(earlier) === conclusionKey(question)))));
+        const history: NonNullable<Feedback['supplementHistory']>[number] = { attempt: task.attempts.length, verification: 'skipped' };
+        (gap.supplementHistory ??= []).push(history);
+        if (!result || result.status === 'unresolved' || !currentSources.length || repeated
           || attempt.detection.assessment.status === 'blocked') {
           gap.status = 'unresolved';
           gap.reasonUnresolved = !result ? 'Supplementary investigation returned no grounded answer to this request.'
-            : key && item.seenConclusions.has(key) ? 'The supplementary analysis repeats a conclusion already sent for review.'
+            : repeated ? 'The same request has already been reviewed with this analysis and evidence.'
             : [result.conclusion, ...result.uncertainties].join(' ');
           continue;
         }
-        conclusions.add(key);
+        history.verification = 'pending';
         gap.status = 'processed';
         gap.reasonUnresolved = undefined;
         answers.push({ requestId: gap.id, question: gap.note, conclusion: result.conclusion,
@@ -203,20 +258,25 @@ export function createAuditScheduler({
         item.attempt = attempt;
         item.index = revisions[0];
         item.signature = candidateInput(attempt, item.index).signature;
+        revised.add(item.index);
       }
-      for (const conclusion of conclusions) item.seenConclusions.add(conclusion);
       item.supplementReview = { attempt, answers };
       item.status = 'pending';
       item.validation = undefined;
       item.reason = undefined;
     }
+    return revised;
   }
 
   function updateCoverage(task: AuditTask) {
     if (task.status !== 'completed') return;
     const latest = task.attempts.findLast(({ supplementRequestIds }) => !supplementRequestIds)?.detection;
+    const answered = new Set([...feedback.values()].filter(({ kind, taskId, status, resolutionEvidence }) =>
+      kind === 'verification_gap' && taskId === task.id && status === 'resolved' && resolutionEvidence?.length)
+      .map(({ note }) => conclusionKey(note)));
     task.coverage = latest && latest.assessment.status !== 'inconclusive'
-      && latest.checks.every(({ status }) => status === 'addressed') && !latest.unresolved.length
+      && latest.checks.every(({ status, note }) => status === 'addressed' || answered.has(conclusionKey(note)))
+      && latest.unresolved.every((note) => answered.has(conclusionKey(note)))
       && task.candidates.every(({ status }) => status === 'supported' || status === 'refuted') ? 'evaluated' : 'needs_evidence';
   }
 
@@ -228,6 +288,10 @@ export function createAuditScheduler({
     const related = task.candidates.filter(({ id }) => requests.some(({ candidateId }) => candidateId === id));
     const priorEvidence = [...(previous?.evidence ?? []), ...related.flatMap(({ attempt }) => attempt.detection.evidence)];
     const evidence = [...new Map(priorEvidence.map((item) => [citationKey(item.source), item])).values()];
+    const repositoryContext = [...feedback.values()].flatMap((item) =>
+      item.kind === 'repository_context' && item.taskId === task.id && item.status === 'resolved'
+        && item.resolutionReason && item.resolutionEvidence?.length ? [{ requestId: item.id, question: item.question ?? item.note,
+          answer: item.resolutionReason, candidateId: item.candidateId, evidence: item.resolutionEvidence }] : []);
     const mapRecords = records();
     const taskTargets = targets();
     task.status = 'in_progress';
@@ -236,30 +300,38 @@ export function createAuditScheduler({
     try {
       startChild();
       const detection = await detectTask({ root: repository.root, repository, map: getMap(), task: { ...task.action,
-        taskId: task.id, goal: goals.find(({ id }) => id === task.action.goalId), startingPoints: evidence.map(({ source }) => source),
+        taskId: task.id, goal: goals.find(({ id }) => id === task.action.goalId), startingPoints: [
+          ...evidence.map(({ source }) => source), ...repositoryContext.flatMap(({ evidence }) => evidence),
+          ...requests.flatMap(({ evidence }) => evidence ?? []),
+        ],
         evidence: task.action.evidence.flatMap(({ recordId }) => {
           const record = mapRecords.get(recordId);
           const target = taskTargets.get(recordId);
           return record ? [{ recordId, citations: record.evidence }] : target ? [{ recordId, citations: [target.source] }] : [];
         }) }, context: { businessRules: context.rules.map(({ rule }) => rule),
         followUp: task.followUp,
+        ...(repositoryContext.length ? { repositoryContext } : {}),
         previousInvestigation: previous && { summary: previous.assessment.summary, evidence,
           requests: related.map((item) => {
             const { claim, rule } = candidateInput(item.attempt, item.index).candidate;
             return { candidateId: item.id, claim, rule, evidenceRequests: requests.filter(({ candidateId }) => candidateId === item.id)
-              .map(({ id, note }) => ({ id, question: note })) };
+              .map((gap) => ({ id: gap.id, question: gap.note, ...(gap.evidence?.length ? { evidence: gap.evidence } : {}),
+                ...(gap.supplementHistory?.length ? { previous: priorSupplements(task, gap).map((result) => ({
+                  conclusion: result.conclusion, uncertainties: result.uncertainties, verification: result.verification,
+                  evidence: result.evidence.map(({ source }) => source),
+                })) } : {}) })) };
           }) },
       }, runBudget: budget, signal }, models, model);
       signal?.throwIfAborted();
       const attempt: Attempt = { detection, validations: [],
         ...(requests.length ? { supplementRequestIds: requests.map(({ id }) => id) } : {}) };
       task.attempts.push(attempt);
+      const revised = requests.length ? registerSupplements(task, attempt, requests) : new Set<number>();
+      registerCandidates(task, attempt, revised);
       if (requests.length) {
-        registerSupplements(task, attempt, requests);
         task.status = previousStatus;
         task.coverage = previousCoverage;
       } else {
-        registerCandidates(task, attempt);
         task.status = detection.coverageProposal.status === 'blocked' ? 'blocked' : 'completed';
         task.coverage = detection.coverageProposal.status;
       }
@@ -293,8 +365,7 @@ export function createAuditScheduler({
       item.validation = result;
       item.status = result.verdict;
       item.reason = result.verdict === 'needs_evidence' ? result.summary : undefined;
-      routeLeads(task, result.leads);
-      if (result.verdict === 'needs_evidence') routeEvidenceRequests(task, item, result);
+      routeLeads(task, result.leads, item.id);
     } catch (error) {
       item.reason = recordFailure('run_validator', { taskId: task.id, candidateId: item.id, candidateIndex: item.index }, error);
       item.status = interrupted(error, signal) ? 'pending' : 'blocked';
@@ -303,11 +374,19 @@ export function createAuditScheduler({
       for (const { requestId } of review.answers) {
         const gap = feedback.get(requestId)!;
         const answer = item.validation?.addressedRequests.find((answer) => answer.requestId === requestId);
+        const history = gap.supplementHistory?.at(-1);
+        if (history) history.verification = answer ? 'verified' : 'unresolved';
         gap.status = answer ? 'resolved' : 'unresolved';
         gap.reasonUnresolved = gap.status === 'resolved' ? undefined : item.reason ?? 'The requested evidence is still insufficient.';
         gap.resolutionEvidence = answer && item.validation?.evidence.filter(({ id }) => answer.evidenceIds.includes(id)).map(({ source }) => source);
       }
       item.supplementReview = undefined;
+    }
+    if (item.status === 'needs_evidence' && item.validation) {
+      for (const note of item.validation.neededEvidence) {
+        const evidence = item.validation.requestEvidence.filter(({ question }) => question === note).flatMap(({ evidence }) => evidence);
+        queueEvidenceRequest(task, item, note, evidence);
+      }
     }
     updateCoverage(task);
     return { taskId: task.id, candidateId: item.id, status: item.status, summary: item.validation?.summary, reason: item.reason };
@@ -398,6 +477,8 @@ export function createAuditScheduler({
       item.status = 'unresolved';
       item.resolutionReason = undefined;
       item.reasonUnresolved = 'Source evidence for the recorded answer changed or is unavailable.';
+      const task = item.taskId && tasks.get(item.taskId);
+      if (task && item.kind === 'verification_gap') updateCoverage(task);
     }
   }
 
@@ -415,6 +496,6 @@ export function createAuditScheduler({
       claim: candidateInput(item.attempt, item.index).candidate.claim, status: item.status, reason: item.reason };
   }
 
-  return { tasks, feedback, applyTask, strategySignals, runBatch, checkFindings, hasWork, targets,
+  return { tasks, feedback, applyTask, applyRepositoryAnswer, strategySignals, runBatch, checkFindings, hasWork, targets,
     describeTask, describeCandidate };
 }

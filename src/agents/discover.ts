@@ -3,7 +3,7 @@ import type { Api, Model, Models } from '@earendil-works/pi-ai';
 import { z } from 'zod';
 import { createQueryMapTool } from '../repository/map-tools.ts';
 import { mapSchema, repositoryRecordId, type RepositoryMap } from '../repository/map.ts';
-import { createRepositoryTools, savedSourceRangeSchema, sourceRangeSchema } from '../repository/repository-tools.ts';
+import { createRepositoryTools, savedSourceRangeSchema, sourceRangeSchema, verifyReadRange } from '../repository/repository-tools.ts';
 import { Repository, type SourceLines } from '../repository/repository.ts';
 import { auditGoalSchema, groundTaskTarget, nonempty as text, proposedGoalSchema, sourceTargetProposalSchema,
   taskTargetSchema, verifyTaskTarget, type TaskTarget } from '../repository/task-target.ts';
@@ -32,7 +32,8 @@ export function mergeDiscoverySources(...groups: (readonly DiscoverySource[])[])
 export const discoverStateSchema = z.object({
   goals: z.array(auditGoalSchema).default([]),
   coverage: z.array(z.object({ ...pair, status: coverageStatus, note: text.optional() })).default([]),
-  tasks: z.array(z.object({ ...pair, id, question: text, target: taskTargetSchema.optional(), status: z.enum(['pending', 'in_progress', 'completed', 'blocked']) })).default([]),
+  tasks: z.array(z.object({ ...pair, id, question: text, expectedEvidence: z.array(text).optional(), target: taskTargetSchema.optional(),
+    status: z.enum(['pending', 'in_progress', 'completed', 'blocked']) })).default([]),
   feedback: z.array(z.object({ id, kind: feedbackKindSchema,
     note: text, recordIds: z.array(id).default([]), taskId: id.optional(), question: text.optional(), reason: text.optional(),
     remainingQuestions: z.array(text).optional(), reasonUnresolved: text.optional(),
@@ -50,6 +51,7 @@ const planSchema = z.object({
   feedbackOutcomes: z.array(z.object({ feedbackId: id,
     status: z.enum(['addressed', 'covered', 'not_applicable', 'deferred', 'needs_information']), reason: text,
     taskIds: z.array(id).default([]), remainingQuestions: z.array(text).default([]), addressedQuestions: z.array(text).default([]),
+    evidence: z.array(sourceRangeSchema).default([]),
   })).default([]),
   actions: z.array(z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('create_task'), targetId: id.optional(), target: sourceTargetProposalSchema.optional(),
@@ -106,7 +108,7 @@ When an index is available, use query_entries to find unread entry candidates an
 Use create_task for an applicable goal at a target without existing work. Optionally set priority to high, normal or low. Use supplement_task for actionable new information on an existing task. In a standalone plan, this can include a supplied verification_gap. Use request_repository_read when a missing repository fact blocks planning. A missing coverage row alone does not establish that a goal applies.
 Understand the feature, protected assets and sensitive operations. Identify inputs and trust boundaries, infer the smallest meaningful business constraint, then ask a source-grounded question. Use the trusted knowledge as prompts for reasoning. Pick the checks that apply to this repository and avoid expanding every entry against every goal. Treat rule hits as leads, read the actual code before using them, and continue from code and business context when scanning is unavailable or produces no hits.
 Before adding work, query_tasks for the same target and compare questions and goal descriptions. Reuse an existing check when it answers the same security question, and supplement it with actionable new evidence. Independently meaningful constraints may have separate tasks even in the same category. Preserve existing task IDs and coverage states.
-Report feedbackOutcomes by feedbackId. Use addressed only for work in create_task or supplement_task actions carrying that feedbackId. Use covered with related existing taskIds, not_applicable with the concrete basis, or deferred or needs_information with the reason. Always list any remainingQuestions, including independent parts not covered by the proposed work. When revisiting remaining questions, list their exact text in addressedQuestions only for parts covered by the linked work or shown to be inapplicable.
+Report feedbackOutcomes by feedbackId. Use addressed for create_task or supplement_task actions carrying that ID. Use covered with taskIds whose recorded question or evidence requirements address the same issue, and explain the match. Sharing a source range is insufficient. For not_applicable, explain the limiting fact and cite freshly read source ranges in evidence. Use deferred or needs_information when scope is uncertain. List remainingQuestions, including independent parts still open. When revisiting remaining questions, cite their exact text in addressedQuestions for settled parts.
 Return one JSON object with an actions array and optional hasMore when meaningful proposals remain for a follow-up plan. Each action includes kind, reason, and optionally relatedRecordIds, feedbackIds and discoverySources. A discovery source may be a kind string or {kind,referenceId} using IDs returned by tools. Kinds are rule_hit, entry_point, security_goal, detection_lead, coverage_gap and code_exploration. create_task requires question and expectedEvidence (a list of source facts to check). For a map target use its targetId. For an indexed entry or symbol use its ID as targetId and provide source {path,startLine,endLine} from this session that covers the declaration. For an unmapped file or narrower business logic provide target {kind:"file" or "source", source:{path,startLine,endLine}} from this session. Use goalId for an existing goal or goal {title,description, optional id} for a new requirement. supplement_task requires taskId and note. request_repository_read requires a concrete question, with a focus label or a known targetId if available. Use exact IDs from the tools. An empty actions array is valid. Write in the language of the task or stated goals.`;
 
 const phaseInstructions: { [Phase in DiscoveryPhase]: string } = {
@@ -165,7 +167,7 @@ function queryTools(records: Map<string, Record>, changed: Set<string>, state: S
         const needle = query?.toLowerCase();
         const items = state.tasks.filter((task) => (!targetId || task.targetId === targetId) && (!goalId || task.goalId === goalId))
           .map((task) => ({ ...task, goal: goals.get(task.goalId) }))
-          .filter((task) => !needle || [task.question, task.targetId, task.goal?.title, task.goal?.description]
+          .filter((task) => !needle || [task.question, task.targetId, task.goal?.title, task.goal?.description, ...task.expectedEvidence ?? []]
             .some((value) => value?.toLowerCase().includes(needle)));
         return toolResult(paged(items, offset, limit));
       },
@@ -427,9 +429,19 @@ export async function discoverTasks(request: DiscoverRequest, models: Models, mo
   signal.throwIfAborted();
   const referencedHits = new Set([...accepted.values()].flatMap(({ discoverySources }) =>
     discoverySources.flatMap((source) => source.kind === 'rule_hit' && source.referenceId ? [source.referenceId] : [])));
+  const feedbackOutcomes = [];
+  for (const outcome of draft.feedbackOutcomes) {
+    if (!feedback.has(outcome.feedbackId) || draft.feedbackOutcomes.filter(({ feedbackId }) => feedbackId === outcome.feedbackId).length !== 1) continue;
+    const evidence: SourceLines[] = [];
+    for (const range of outcome.evidence) {
+      signal.throwIfAborted();
+      const current = repository && await verifyReadRange(repository, observed, range);
+      if (current) evidence.push(current);
+    }
+    feedbackOutcomes.push({ ...outcome, evidence: evidence.length === outcome.evidence.length ? evidence : [] });
+  }
   return { phase, focus, ruleHitSummary: ruleScan.summary, referencedRuleHits: [...referencedHits].map((id) => hits.get(id)!),
-    feedbackOutcomes: draft.feedbackOutcomes.filter(({ feedbackId }, _index, outcomes) => feedback.has(feedbackId)
-      && outcomes.filter((item) => item.feedbackId === feedbackId).length === 1),
+    feedbackOutcomes,
     hasMore: draft.hasMore, goals: [...addedGoals.values()], actions: [...accepted.values()].map((action) => {
     const targetId = action.kind === 'supplement_task' ? tasks.get(action.taskId)!.targetId : action.targetId;
     const feedbackRecords = action.feedbackIds.flatMap((feedbackId) => feedback.get(feedbackId)!.recordIds);

@@ -31,10 +31,15 @@ export const detectionTaskSchema = z.object({
 export const detectionContextSchema = z.object({
   businessRules: z.array(text).default([]),
   followUp: z.array(text).default([]),
+  repositoryContext: z.array(z.object({ requestId: id, question: text, answer: text, candidateId: id.optional(),
+    evidence: z.array(savedSourceRangeSchema).min(1) })).optional(),
   previousInvestigation: z.object({ summary: text, evidence: z.array(z.object({
     source: savedSourceRangeSchema, observation: text,
   })), requests: z.array(z.object({ candidateId: id.optional(), claim: text, rule: text.optional(),
-    questions: z.array(text).optional(), evidenceRequests: z.array(z.object({ id, question: text })).optional(),
+    questions: z.array(text).optional(), evidenceRequests: z.array(z.object({ id, question: text,
+      evidence: z.array(savedSourceRangeSchema).optional(), previous: z.array(z.object({ conclusion: text,
+        uncertainties: z.array(text), evidence: z.array(savedSourceRangeSchema), verification: text })).optional(),
+    })).optional(),
   })) }).optional(),
 });
 
@@ -52,7 +57,7 @@ export const candidateSchema = z.object({ claim: text, rule: text, evidenceIds: 
 const draftEvidenceSchema = z.object({ id: text, source: sourceRangeSchema, observation: text });
 export const detectionEvidenceSchema = draftEvidenceSchema.extend({ source: savedSourceRangeSchema });
 export const reviewLeadSchema = z.object({ question: text, reason: text, evidenceIds: evidenceIds.min(1),
-  kind: z.enum(['discovery_lead', 'repository_context', 'coverage_gap']).optional() });
+  kind: z.enum(['discovery_lead', 'repository_context', 'coverage_gap']).optional(), blocking: z.boolean().optional() });
 
 export function groundReviewLeads(taskId: string, leads: z.output<typeof reviewLeadSchema>[],
   evidence: { id: string; source: SourceLines }[]) {
@@ -88,7 +93,7 @@ Use the compact knowledgeDirectory to select a guide by ID or use list_detection
 Return one JSON object with assessment {status,summary}, evidence, checks, candidates, leads, and unresolved (an array of short concrete gaps). Use the task's language. Assessment status is suspected_violation, no_issue_observed (scoped to reviewed source), inconclusive, or blocked.
 Each evidence item is {id,source:{path,startLine,endLine},observation}. Cite ranges actually read in this run through read_lines or get_symbol_code. Each check is {index,status,note,evidenceIds}, where index is 1-based from expectedEvidence, status is addressed or unresolved. Addressed requires source evidence.
 Each candidate is {claim,rule,evidenceIds,counterevidenceIds,openQuestions}. Describe a suspected mismatch with an applicable requirement for independent source review; separate assumptions from observations. Each lead is {question,reason,evidenceIds}. Candidates and leads may be empty. Finish when the question is answered or explain the evidence gaps.`;
-const followUpInstructions = `Use the prior investigation as context. Return supplementResults for each supplied evidence request using its requestId, status (resolved, partial or unresolved), concrete conclusion, evidenceIds and remaining uncertainties. Re-read and cite the source supporting that specific conclusion, including previously cited ranges when they explain something new. If changing a candidate, give its supplied stable ID as priorCandidateId. Put independent questions in separate leads, one question per lead. Use discovery_lead, repository_context or coverage_gap with source references.`;
+const followUpInstructions = `Use prior investigations and repositoryContext as leads and verify the source yourself. Return supplementResults per requestId with status (resolved, partial or unresolved), concrete conclusion, relevant evidenceIds and remaining uncertainties. Re-read the source that supports that specific answer, including prior ranges when they explain something new. Use priorCandidateId only for a revision of the supplied candidate. Report independent grounded candidates normally. Use separate leads for open discovery_lead, repository_context or coverage_gap questions. Set blocking on repository_context when the missing fact prevents progress.`;
 
 export async function detectTask(request: DetectionRequest, models: Models, model: Model<Api>) {
   const { budget, signal } = sessionBudget(request);
@@ -160,7 +165,8 @@ export async function detectTask(request: DetectionRequest, models: Models, mode
     if (!requested.has(result.requestId) || results.filter(({ requestId }) => requestId === result.requestId).length !== 1) return [];
     const grounded = hasVerifiedEvidence(result.evidenceIds);
     const usable = grounded && (result.status !== 'partial' || result.uncertainties.length > 0);
-    return [{ ...result, status: usable ? result.status : 'unresolved' as const,
+    const status = result.status === 'resolved' && result.uncertainties.length ? 'partial' as const : result.status;
+    return [{ ...result, status: usable ? status : 'unresolved' as const,
       uncertainties: usable || result.status === 'unresolved' ? result.uncertainties : [...result.uncertainties,
         'The proposed answer needs verified source references and an explanation of any remaining uncertainty.'],
       evidence: grounded ? evidence.filter(({ id }) => result.evidenceIds.includes(id)) : [] }];

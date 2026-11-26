@@ -49,6 +49,7 @@ function countBy<T>(items: readonly T[], key: (item: T) => string) {
 }
 
 const short = (value?: string) => value && value.length > 320 ? value.slice(0, 317) + '…' : value;
+const scopeText = (value: string) => value.normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ').replace(/[。.!?！？]+$/u, '');
 
 export async function runMain(request: MainRequest, models: Models, model: Model<Api>) {
   const budget = new RunBudget(request);
@@ -105,6 +106,10 @@ export async function runMain(request: MainRequest, models: Models, model: Model
       const outcome = outcomes.get(id);
       const appliedIds = applied.get(id) ?? [];
       const coveredIds = outcome?.status === 'covered' ? [...new Set(outcome.taskIds)] : [];
+      const questions = item.remainingQuestions?.length
+        ? item.remainingQuestions.filter((question) => outcome?.addressedQuestions.includes(question))
+        : [item.question ?? item.note];
+      const coveredScope = new Set<string>();
       let covered = coveredIds.length > 0;
       for (const taskId of coveredIds) {
         const task = tasks.get(taskId);
@@ -114,8 +119,16 @@ export async function runMain(request: MainRequest, models: Models, model: Model
           range.path === source.path && range.sha256 === source.sha256 && range.startLine <= source.endLine && source.startLine <= range.endLine))
           : item.recordIds.includes(task.action.targetId) ? refs : [];
         if (!(await Promise.all(linked.map((source) => repository.isCurrent(source)))).some(Boolean)) { covered = false; break; }
+        const goal = goals.find(({ id }) => id === task.action.goalId);
+        for (const entry of [task.action.question, ...task.action.expectedEvidence, ...task.followUp, goal?.description]) {
+          if (entry) coveredScope.add(scopeText(entry));
+        }
       }
-      const grounded = (outcome?.status === 'addressed' && appliedIds.length > 0) || covered || outcome?.status === 'not_applicable';
+      covered = covered && questions.length > 0 && questions.every((question) => coveredScope.has(scopeText(question)))
+        && Boolean(outcome?.reason && scopeText(outcome.reason) !== scopeText(item.question ?? item.note));
+      const inapplicable = outcome?.status === 'not_applicable' && outcome.evidence.length > 0
+        && scopeText(outcome.reason) !== scopeText(item.question ?? item.note);
+      const grounded = (outcome?.status === 'addressed' && appliedIds.length > 0) || covered || inapplicable;
       const remaining = (item.remainingQuestions ?? []).filter((question) => !grounded || !outcome?.addressedQuestions.includes(question));
       item.remainingQuestions = [...new Set([...remaining, ...outcome?.remainingQuestions ?? []])];
       item.workIds = [...new Set([...item.workIds ?? [], ...appliedIds, ...covered ? coveredIds : []])];
@@ -129,7 +142,8 @@ export async function runMain(request: MainRequest, models: Models, model: Model
         const rejection = plan.discarded.find(({ feedbackIds }) => feedbackIds?.includes(id))?.reason;
         item.reasonUnresolved = outcome?.status === 'addressed' && !appliedIds.length
           ? rejection ?? 'No linked proposal was applied to the task queue.'
-          : outcome?.status === 'covered' && !covered ? 'The cited work does not provide eligible, source-linked coverage.'
+          : outcome?.status === 'covered' && !covered ? 'The cited work does not provide eligible, source-linked coverage of the same security question.'
+          : outcome?.status === 'not_applicable' && !inapplicable ? 'The inapplicability decision lacks a specific reason grounded in current source.'
           : outcome?.reason ?? rejection ?? 'Discover returned no complete disposition for this feedback.';
       }
     }
@@ -270,6 +284,7 @@ export async function runMain(request: MainRequest, models: Models, model: Model
             item.resolutionReason = answer.status === 'answered' ? answer.summary : undefined;
             item.resolutionEvidence = answer.status === 'answered' ? answer.evidence : undefined;
             item.reasonUnresolved = answer.status === 'unresolved' ? answer.summary : undefined;
+            scheduler.applyRepositoryAnswer(item);
           }
           repositoryReads.push({ ...reading, requestId });
           return { summary: short(reading.summary), records: nextMap.records.length, unresolved: reading.unresolved.slice(0, 4).map(short),
@@ -314,7 +329,8 @@ export async function runMain(request: MainRequest, models: Models, model: Model
           runBudget: budget, signal, auditObjective: goal, phase, focus, hasPriorPlan, ruleScanner: request.ruleScanner,
           continuation, state: { goals, feedback: inbox, coverage: active.map(({ action, coverage: status }) =>
             ({ targetId: action.targetId, goalId: action.goalId, status })), tasks: active.map(({ id, action, status }) =>
-            ({ id, targetId: action.targetId, goalId: action.goalId, question: action.question, target: action.target, status })) },
+            ({ id, targetId: action.targetId, goalId: action.goalId, question: action.question,
+              expectedEvidence: action.expectedEvidence, target: action.target, status })) },
         }, models, model);
         signal?.throwIfAborted();
         for (const goal of plan.goals) if (!goals.some(({ id }) => id === goal.id)) goals.push(goal);
